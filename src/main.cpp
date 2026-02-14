@@ -236,8 +236,21 @@ struct Platform {
 
 struct Cat {
   glm::vec3 position;
-  glm::vec3 followPos;
+  glm::vec3 velocity = glm::vec3(0.0f);
   bool collected = false;
+  
+  // AI state
+  enum class Behavior { Idle, Wandering, Following };
+  Behavior behavior = Behavior::Idle;
+  float behaviorTimer = 0.0f;
+  glm::vec3 wanderTarget = glm::vec3(0.0f);
+  
+  // Personality
+  float moveSpeed = 3.0f;
+  float turnSpeed = 5.0f;
+  float facing = 0.0f;
+  float walkCycle = 0.0f;
+  unsigned int seed = 0;
 };
 
 static void FramebufferSizeCallback(GLFWwindow* window, int width, int height) {
@@ -609,19 +622,28 @@ int main() {
   };
 
   std::vector<Cat> cats = {
-      {{2.5f, 0.0f, -2.0f}, {}, false},
-      {{-4.0f, 0.0f, 3.0f}, {}, false},
-      {{6.0f, 2.0f, 1.5f}, {}, false},
-      {{-9.0f, 2.4f, 4.0f}, {}, false},
-      {{-12.0f, 3.8f, 6.0f}, {}, false},
-      {{10.0f, 2.2f, -5.5f}, {}, false},
-      {{14.0f, 3.4f, -8.0f}, {}, false},
-      {{-14.0f, 2.2f, -6.0f}, {}, false},
-      {{-18.0f, 2.8f, -9.0f}, {}, false},
-      {{-6.0f, 5.0f, 9.0f}, {}, false},
+      {{2.5f, 0.0f, -2.0f}},
+      {{-4.0f, 0.0f, 3.0f}},
+      {{6.0f, 2.0f, 1.5f}},
+      {{-9.0f, 2.4f, 4.0f}},
+      {{-12.0f, 3.8f, 6.0f}},
+      {{10.0f, 2.2f, -5.5f}},
+      {{14.0f, 3.4f, -8.0f}},
+      {{-14.0f, 2.2f, -6.0f}},
+      {{-18.0f, 2.8f, -9.0f}},
+      {{-6.0f, 5.0f, 9.0f}},
   };
+  
+  // Initialize cat personalities
+  unsigned int catSeed = 42u;
   for (Cat& cat : cats) {
-    cat.followPos = cat.position;
+    cat.seed = catSeed;
+    catSeed = catSeed * 1664525u + 1013904223u;
+    cat.moveSpeed = 2.5f + RandomFloat(cat.seed) * 2.0f; // 2.5-4.5 speed
+    cat.turnSpeed = 4.0f + RandomFloat(cat.seed) * 3.0f; // 4-7 turn rate
+    cat.facing = RandomFloat(cat.seed) * 6.28318f;
+    cat.behaviorTimer = RandomFloat(cat.seed) * 3.0f;
+    cat.behavior = Cat::Behavior::Idle;
   }
   const glm::vec3 carPosition(18.0f, 0.0f, 16.0f);
   bool hasWon = false;
@@ -888,31 +910,120 @@ int main() {
     for (Cat& cat : cats) {
       if (!cat.collected && glm::distance(player.position, cat.position) < 1.2f) {
         cat.collected = true;
-        cat.followPos = player.position;
+        cat.behavior = Cat::Behavior::Following;
+        cat.behaviorTimer = 0.0f;
       }
       if (cat.collected) {
         collectedCount++;
       }
     }
 
-    glm::vec3 followDir(std::sin(playerFacing), 0.0f, std::cos(playerFacing));
-    if (glm::length(followDir) < 0.001f) {
-      followDir = glm::vec3(0.0f, 0.0f, 1.0f);
-    }
-    followDir = glm::normalize(followDir);
-    glm::vec3 leaderPos = player.position;
-    int followIndex = 0;
+    // Update cat AI and physics
     for (Cat& cat : cats) {
-      if (!cat.collected) {
-        continue;
+      cat.behaviorTimer -= deltaTime;
+      
+      // Apply gravity
+      const float catGravity = -18.0f;
+      cat.velocity.y += catGravity * deltaTime;
+      
+      // Ground collision
+      const float catRadius = 0.3f;
+      if (cat.position.y - catRadius < 0.0f) {
+        cat.position.y = catRadius;
+        cat.velocity.y = 0.0f;
       }
-      const float spacing = 0.9f + 0.15f * static_cast<float>(followIndex);
-      const glm::vec3 target = leaderPos - followDir * spacing +
-                               glm::vec3(0.0f, 0.25f + 0.05f * std::sin(currentTime * 3.0f + followIndex), 0.0f);
-      const float followAlpha = 1.0f - std::exp(-6.0f * deltaTime);
-      cat.followPos = glm::mix(cat.followPos, target, followAlpha);
-      leaderPos = cat.followPos;
-      followIndex++;
+      
+      // Platform collision
+      for (size_t i = 1; i < platforms.size(); ++i) {
+        const Platform& platform = platforms[i];
+        const float platformTop = platform.position.y + platform.halfExtents.y;
+        const bool withinX = std::abs(cat.position.x - platform.position.x) <= (platform.halfExtents.x + catRadius);
+        const bool withinZ = std::abs(cat.position.z - platform.position.z) <= (platform.halfExtents.z + catRadius);
+        const bool falling = cat.velocity.y <= 0.0f;
+        if (withinX && withinZ && falling) {
+          const float catBottom = cat.position.y - catRadius;
+          if (catBottom < platformTop && cat.position.y > platformTop - 0.6f) {
+            cat.position.y = platformTop + catRadius;
+            cat.velocity.y = 0.0f;
+          }
+        }
+      }
+      
+      glm::vec3 desiredVelocity(0.0f);
+      
+      if (cat.collected) {
+        // Following AI - move toward area around player
+        if (cat.behaviorTimer <= 0.0f) {
+          // Pick new target near player
+          const float angle = RandomFloat(cat.seed) * 6.28318f;
+          const float radius = 2.0f + RandomFloat(cat.seed) * 2.0f;
+          cat.wanderTarget = player.position + glm::vec3(std::cos(angle) * radius, 0.0f, std::sin(angle) * radius);
+          cat.behaviorTimer = 2.0f + RandomFloat(cat.seed) * 2.0f;
+        }
+        
+        const glm::vec3 toTarget = cat.wanderTarget - cat.position;
+        const float distToTarget = glm::length(glm::vec2(toTarget.x, toTarget.z));
+        
+        if (distToTarget > 0.5f) {
+          const glm::vec3 dir = glm::normalize(glm::vec3(toTarget.x, 0.0f, toTarget.z));
+          desiredVelocity = dir * cat.moveSpeed;
+          
+          // Update facing
+          const float targetFacing = std::atan2(dir.x, dir.z);
+          float facingDiff = targetFacing - cat.facing;
+          while (facingDiff > 3.14159f) facingDiff -= 6.28318f;
+          while (facingDiff < -3.14159f) facingDiff += 6.28318f;
+          cat.facing += facingDiff * cat.turnSpeed * deltaTime;
+        }
+      } else {
+        // Wandering AI - explore randomly
+        if (cat.behaviorTimer <= 0.0f) {
+          const float roll = RandomFloat(cat.seed);
+          if (roll < 0.4f) {
+            // Idle
+            cat.behavior = Cat::Behavior::Idle;
+            cat.behaviorTimer = 1.0f + RandomFloat(cat.seed) * 2.0f;
+          } else {
+            // Wander
+            cat.behavior = Cat::Behavior::Wandering;
+            const float angle = RandomFloat(cat.seed) * 6.28318f;
+            const float dist = 2.0f + RandomFloat(cat.seed) * 4.0f;
+            cat.wanderTarget = cat.position + glm::vec3(std::cos(angle) * dist, 0.0f, std::sin(angle) * dist);
+            cat.behaviorTimer = 2.0f + RandomFloat(cat.seed) * 3.0f;
+          }
+        }
+        
+        if (cat.behavior == Cat::Behavior::Wandering) {
+          const glm::vec3 toTarget = cat.wanderTarget - cat.position;
+          const float distToTarget = glm::length(glm::vec2(toTarget.x, toTarget.z));
+          
+          if (distToTarget > 0.5f) {
+            const glm::vec3 dir = glm::normalize(glm::vec3(toTarget.x, 0.0f, toTarget.z));
+            desiredVelocity = dir * (cat.moveSpeed * 0.5f); // Slower when wandering
+            
+            const float targetFacing = std::atan2(dir.x, dir.z);
+            float facingDiff = targetFacing - cat.facing;
+            while (facingDiff > 3.14159f) facingDiff -= 6.28318f;
+            while (facingDiff < -3.14159f) facingDiff += 6.28318f;
+            cat.facing += facingDiff * cat.turnSpeed * deltaTime;
+          } else {
+            cat.behavior = Cat::Behavior::Idle;
+            cat.behaviorTimer = 1.0f + RandomFloat(cat.seed) * 2.0f;
+          }
+        }
+      }
+      
+      // Apply horizontal movement with smooth acceleration
+      const float accel = 12.0f * deltaTime;
+      cat.velocity.x = glm::mix(cat.velocity.x, desiredVelocity.x, accel);
+      cat.velocity.z = glm::mix(cat.velocity.z, desiredVelocity.z, accel);
+      
+      // Update walk cycle
+      const float speed = glm::length(glm::vec2(cat.velocity.x, cat.velocity.z));
+      cat.walkCycle += speed * deltaTime * 3.0f;
+      
+      // Apply velocity
+      cat.position += cat.velocity * deltaTime;
     }
 
     if (!hasWon && collectedCount >= 10 && glm::distance(player.position, carPosition) < 2.2f) {
@@ -977,11 +1088,58 @@ int main() {
       DrawCube(platform.position, platform.halfExtents * 2.0f, platform.tint, platformTexture);
     }
 
+    int catIndex = 0;
     for (const Cat& cat : cats) {
-      const glm::vec3 catPos = cat.collected ? cat.followPos : cat.position;
-      const glm::vec3 bodyScale(0.35f, 0.25f, 0.45f);
-      DrawCube(catPos + glm::vec3(0.0f, 0.25f, 0.0f), bodyScale, glm::vec3(1.0f, 0.8f, 0.9f), catTexture);
-      DrawCube(catPos + glm::vec3(0.0f, 0.48f, 0.25f), glm::vec3(0.18f), glm::vec3(1.0f, 0.9f, 0.95f), catTexture);
+      const float speed = glm::length(glm::vec2(cat.velocity.x, cat.velocity.z));
+      const float walkAmount = glm::clamp(speed / 3.0f, 0.0f, 1.0f);
+      const float catBob = std::sin(cat.walkCycle * 2.0f) * walkAmount * 0.05f;
+      const float catWag = std::sin(cat.walkCycle * 1.6f) * 0.25f;
+      const float legSwing = std::sin(cat.walkCycle) * walkAmount * 0.18f;
+      
+      glm::vec3 catPos = cat.position + glm::vec3(0.0f, catBob, 0.0f);
+      const glm::vec3 bodyScale(0.38f, 0.24f, 0.5f);
+      const glm::vec3 headScale(0.22f, 0.22f, 0.22f);
+      const glm::vec3 earScale(0.08f, 0.12f, 0.06f);
+      const glm::vec3 legScale(0.06f, 0.18f, 0.06f);
+      
+      // Helper to draw oriented parts
+      auto DrawCatPart = [&](const glm::vec3& localPos, const glm::vec3& scale, const glm::vec3& tint) {
+        glBindTexture(GL_TEXTURE_2D, catTexture);
+        glm::mat4 model(1.0f);
+        model = glm::translate(model, catPos);
+        model = glm::rotate(model, cat.facing, glm::vec3(0.0f, 1.0f, 0.0f));
+        model = glm::translate(model, localPos);
+        model = glm::scale(model, scale);
+        shader.SetMat4("uModel", model);
+        shader.SetMat3("uNormalMatrix", glm::transpose(glm::inverse(glm::mat3(model))));
+        shader.SetVec3("uTint", tint);
+        glDrawArrays(GL_TRIANGLES, 0, 36);
+      };
+
+      DrawCatPart(glm::vec3(0.0f, 0.28f, 0.0f), bodyScale, glm::vec3(1.0f, 0.85f, 0.95f));
+      DrawCatPart(glm::vec3(0.0f, 0.5f, 0.32f), headScale, glm::vec3(1.0f, 0.92f, 0.98f));
+      DrawCatPart(glm::vec3(0.09f, 0.62f, 0.38f), earScale, glm::vec3(0.95f, 0.75f, 0.85f));
+      DrawCatPart(glm::vec3(-0.09f, 0.62f, 0.38f), earScale, glm::vec3(0.95f, 0.75f, 0.85f));
+
+      DrawCatPart(glm::vec3(0.12f, 0.12f, 0.18f + legSwing), legScale, glm::vec3(0.95f, 0.8f, 0.9f));
+      DrawCatPart(glm::vec3(-0.12f, 0.12f, 0.18f - legSwing), legScale, glm::vec3(0.95f, 0.8f, 0.9f));
+      DrawCatPart(glm::vec3(0.12f, 0.12f, -0.18f - legSwing), legScale, glm::vec3(0.95f, 0.8f, 0.9f));
+      DrawCatPart(glm::vec3(-0.12f, 0.12f, -0.18f + legSwing), legScale, glm::vec3(0.95f, 0.8f, 0.9f));
+
+      // Tail with wag
+      glm::mat4 tailModel(1.0f);
+      tailModel = glm::translate(tailModel, catPos);
+      tailModel = glm::rotate(tailModel, cat.facing, glm::vec3(0.0f, 1.0f, 0.0f));
+      tailModel = glm::translate(tailModel, glm::vec3(0.0f, 0.34f, -0.32f));
+      tailModel = glm::rotate(tailModel, catWag, glm::vec3(0.0f, 1.0f, 0.0f));
+      tailModel = glm::scale(tailModel, glm::vec3(0.08f, 0.08f, 0.35f));
+      shader.SetMat4("uModel", tailModel);
+      shader.SetMat3("uNormalMatrix", glm::transpose(glm::inverse(glm::mat3(tailModel))));
+      shader.SetVec3("uTint", glm::vec3(1.0f, 0.8f, 0.9f));
+      glBindTexture(GL_TEXTURE_2D, catTexture);
+      glDrawArrays(GL_TRIANGLES, 0, 36);
+
+      catIndex++;
     }
 
     DrawCube(carPosition + glm::vec3(0.0f, 0.5f, 0.0f), glm::vec3(1.2f, 0.5f, 2.0f), glm::vec3(0.4f, 0.6f, 0.9f), carTexture);
