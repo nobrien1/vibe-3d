@@ -35,6 +35,16 @@ if (NOT glad_POPULATED)
 endif()
 add_subdirectory(${glad_SOURCE_DIR}/cmake glad-cmake)
 
+FetchContent_Declare(
+  miniaudio
+  GIT_REPOSITORY https://github.com/mackron/miniaudio.git
+  GIT_TAG 0.11.21
+)
+FetchContent_GetProperties(miniaudio)
+if (NOT miniaudio_POPULATED)
+  FetchContent_Populate(miniaudio)
+endif()
+
 # Glad's CMake provides glad_add_library for on-demand loader generation.
 glad_add_library(glad_gl STATIC API gl:core=3.3)
 
@@ -43,6 +53,8 @@ add_executable(vibe3d
 )
 
 target_link_libraries(vibe3d PRIVATE glfw glad_gl glm)
+target_include_directories(vibe3d PRIVATE ${miniaudio_SOURCE_DIR})
+target_compile_definitions(vibe3d PRIVATE MINIAUDIO_IMPLEMENTATION)
 
 if (APPLE)
   target_compile_definitions(vibe3d PRIVATE GL_SILENCE_DEPRECATION)

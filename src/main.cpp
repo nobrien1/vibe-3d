@@ -12,6 +12,8 @@
 #include <string>
 #include <vector>
 
+#include "miniaudio.h"
+
 #ifndef VIBE_SHADER_DIR
 #define VIBE_SHADER_DIR "shaders"
 #endif
@@ -25,6 +27,112 @@ static std::string ReadFile(const std::string& path) {
   std::ostringstream contents;
   contents << file.rdbuf();
   return contents.str();
+}
+
+struct Sound {
+  std::vector<float> samples;
+  ma_audio_buffer buffer{};
+  ma_sound sound{};
+};
+
+struct AudioState {
+  ma_engine engine{};
+  bool ready = false;
+  Sound footstep;
+  Sound jump;
+  Sound land;
+  Sound ambient;
+  Sound chase;
+};
+
+static float RandomFloat(unsigned int& seed) {
+  seed = seed * 1664525u + 1013904223u;
+  return static_cast<float>((seed >> 8) & 0xFFFFFF) / static_cast<float>(0xFFFFFF);
+}
+
+static std::vector<float> GenerateFootstep(int sampleRate) {
+  const int frames = static_cast<int>(sampleRate * 0.08f);
+  std::vector<float> data(frames);
+  unsigned int seed = 1337u;
+  for (int i = 0; i < frames; ++i) {
+    const float t = static_cast<float>(i) / static_cast<float>(frames);
+    const float env = std::exp(-t * 8.0f);
+    const float noise = (RandomFloat(seed) * 2.0f - 1.0f) * 0.4f;
+    const float tone = std::sin(2.0f * 3.14159f * 110.0f * t) * 0.25f;
+    data[i] = (noise + tone) * env;
+  }
+  return data;
+}
+
+static std::vector<float> GenerateJump(int sampleRate) {
+  const int frames = static_cast<int>(sampleRate * 0.2f);
+  std::vector<float> data(frames);
+  for (int i = 0; i < frames; ++i) {
+    const float t = static_cast<float>(i) / static_cast<float>(frames);
+    const float freq = 240.0f + t * 420.0f;
+    const float env = std::exp(-t * 4.0f);
+    data[i] = std::sin(2.0f * 3.14159f * freq * t) * env * 0.35f;
+  }
+  return data;
+}
+
+static std::vector<float> GenerateLand(int sampleRate) {
+  const int frames = static_cast<int>(sampleRate * 0.12f);
+  std::vector<float> data(frames);
+  unsigned int seed = 999u;
+  for (int i = 0; i < frames; ++i) {
+    const float t = static_cast<float>(i) / static_cast<float>(frames);
+    const float env = std::exp(-t * 10.0f);
+    const float noise = (RandomFloat(seed) * 2.0f - 1.0f) * 0.25f;
+    const float tone = std::sin(2.0f * 3.14159f * 80.0f * t) * 0.4f;
+    data[i] = (noise + tone) * env;
+  }
+  return data;
+}
+
+static std::vector<float> GenerateAmbient(int sampleRate) {
+  const int frames = static_cast<int>(sampleRate * 4.0f);
+  std::vector<float> data(frames);
+  unsigned int seed = 4242u;
+  for (int i = 0; i < frames; ++i) {
+    const float t = static_cast<float>(i) / static_cast<float>(sampleRate);
+    const float hum = std::sin(2.0f * 3.14159f * 55.0f * t) * 0.12f +
+                      std::sin(2.0f * 3.14159f * 110.0f * t) * 0.07f;
+    const float noise = (RandomFloat(seed) * 2.0f - 1.0f) * 0.02f;
+    data[i] = hum + noise;
+  }
+  return data;
+}
+
+static std::vector<float> GenerateChase(int sampleRate) {
+  const int frames = static_cast<int>(sampleRate * 0.45f);
+  std::vector<float> data(frames);
+  for (int i = 0; i < frames; ++i) {
+    const float t = static_cast<float>(i) / static_cast<float>(frames);
+    const float freq = 160.0f + t * 260.0f;
+    const float env = std::exp(-t * 3.5f);
+    data[i] = std::sin(2.0f * 3.14159f * freq * t) * env * 0.5f;
+  }
+  return data;
+}
+
+static bool CreateSound(ma_engine& engine, Sound& sound, std::vector<float>&& samples, bool loop) {
+  sound.samples = std::move(samples);
+  ma_audio_buffer_config config = ma_audio_buffer_config_init(
+      ma_format_f32, 1, static_cast<ma_uint32>(sound.samples.size()), sound.samples.data(), nullptr);
+  if (ma_audio_buffer_init(&config, &sound.buffer) != MA_SUCCESS) {
+    return false;
+  }
+  if (ma_sound_init_from_data_source(&engine, &sound.buffer, MA_SOUND_FLAG_NO_SPATIALIZATION, nullptr, &sound.sound) != MA_SUCCESS) {
+    return false;
+  }
+  ma_sound_set_looping(&sound.sound, loop ? MA_TRUE : MA_FALSE);
+  return true;
+}
+
+static void PlaySound(Sound& sound) {
+  ma_sound_seek_to_pcm_frame(&sound.sound, 0);
+  ma_sound_start(&sound.sound);
 }
 
 struct Shader {
@@ -443,6 +551,23 @@ int main() {
   const GLuint clownAccentTexture = BuildDotsTexture(220, 60);
   const GLuint knifeTexture = BuildMetalTexture();
 
+  AudioState audio;
+  if (ma_engine_init(nullptr, &audio.engine) == MA_SUCCESS) {
+    audio.ready = true;
+    const int sampleRate = 48000;
+    CreateSound(audio.engine, audio.footstep, GenerateFootstep(sampleRate), false);
+    CreateSound(audio.engine, audio.jump, GenerateJump(sampleRate), false);
+    CreateSound(audio.engine, audio.land, GenerateLand(sampleRate), false);
+    CreateSound(audio.engine, audio.ambient, GenerateAmbient(sampleRate), true);
+    CreateSound(audio.engine, audio.chase, GenerateChase(sampleRate), false);
+    ma_sound_set_volume(&audio.ambient.sound, 0.3f);
+    ma_sound_set_volume(&audio.footstep.sound, 0.45f);
+    ma_sound_set_volume(&audio.jump.sound, 0.5f);
+    ma_sound_set_volume(&audio.land.sound, 0.5f);
+    ma_sound_set_volume(&audio.chase.sound, 0.6f);
+    ma_sound_start(&audio.ambient.sound);
+  }
+
   Player player;
   const glm::vec3 playerSpawn{0.0f, 2.0f, 0.0f};
   Enemy clown;
@@ -475,6 +600,10 @@ int main() {
   bool cameraInitialized = false;
   float playerWalkCycle = 0.0f;
   float clownWalkCycle = 0.0f;
+  bool wasPlayerOnGround = false;
+  bool wasClownOnGround = false;
+  float footstepTimer = 0.0f;
+  float chaseTimer = 0.0f;
 
   shader.Use();
   shader.SetInt("uTexture", 0);
@@ -594,6 +723,9 @@ int main() {
       player.onGround = false;
       coyoteTimer = 0.0f;
       jumpBufferTimer = 0.0f;
+      if (audio.ready) {
+        PlaySound(audio.jump);
+      }
     }
 
     const float enemyGround = platforms[0].position.y + platforms[0].halfExtents.y + clown.halfSize;
@@ -645,6 +777,31 @@ int main() {
       const float jumpVelocity = std::sqrt(2.0f * -gravity * jumpHeight);
       clown.velocity.y = jumpVelocity;
       clown.jumpCooldown = 0.45f;
+    }
+
+    if (audio.ready) {
+      footstepTimer -= deltaTime;
+      const float playerSpeed = glm::length(glm::vec2(player.velocity.x, player.velocity.z));
+      if (player.onGround && playerSpeed > 0.2f && footstepTimer <= 0.0f) {
+        PlaySound(audio.footstep);
+        footstepTimer = 0.35f - glm::clamp(playerSpeed / (moveSpeed * sprintMultiplier), 0.0f, 1.0f) * 0.15f;
+      }
+
+      if (!wasPlayerOnGround && player.onGround) {
+        PlaySound(audio.land);
+      }
+      wasPlayerOnGround = player.onGround;
+
+      if (!wasClownOnGround && clown.onGround) {
+        PlaySound(audio.land);
+      }
+      wasClownOnGround = clown.onGround;
+
+      chaseTimer -= deltaTime;
+      if (playerDistance < 5.5f && chaseTimer <= 0.0f) {
+        PlaySound(audio.chase);
+        chaseTimer = 2.5f;
+      }
     }
 
     clown.position += clown.velocity * deltaTime;
@@ -875,6 +1032,19 @@ int main() {
   glDeleteTextures(1, &clownSkinTexture);
   glDeleteTextures(1, &clownAccentTexture);
   glDeleteTextures(1, &knifeTexture);
+  if (audio.ready) {
+    ma_sound_uninit(&audio.footstep.sound);
+    ma_sound_uninit(&audio.jump.sound);
+    ma_sound_uninit(&audio.land.sound);
+    ma_sound_uninit(&audio.ambient.sound);
+    ma_sound_uninit(&audio.chase.sound);
+    ma_audio_buffer_uninit(&audio.footstep.buffer);
+    ma_audio_buffer_uninit(&audio.jump.buffer);
+    ma_audio_buffer_uninit(&audio.land.buffer);
+    ma_audio_buffer_uninit(&audio.ambient.buffer);
+    ma_audio_buffer_uninit(&audio.chase.buffer);
+    ma_engine_uninit(&audio.engine);
+  }
   glfwTerminate();
   return 0;
 }
