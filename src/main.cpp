@@ -475,10 +475,10 @@ int main() {
         std::sin(pitch),
         std::cos(yaw) * std::cos(pitch)));
 
+    static double lastX = 0.0;
+    static double lastY = 0.0;
+    static bool first = true;
     if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
-      static double lastX = 0.0;
-      static double lastY = 0.0;
-      static bool first = true;
       double x = 0.0;
       double y = 0.0;
       glfwGetCursorPos(window, &x, &y);
@@ -490,16 +490,13 @@ int main() {
       const float sensitivity = 0.005f;
       const float dx = static_cast<float>(x - lastX) * sensitivity;
       const float dy = static_cast<float>(y - lastY) * sensitivity;
-      yaw += dx;
+      yaw -= dx;
       pitch -= dy;
       pitch = glm::clamp(pitch, glm::radians(-70.0f), glm::radians(20.0f));
       lastX = x;
       lastY = y;
     } else {
-      static bool reset = true;
-      if (reset) {
-        reset = false;
-      }
+      first = true;
     }
 
     glm::vec3 forwardXZ = glm::normalize(glm::vec3(cameraForward.x, 0.0f, cameraForward.z));
