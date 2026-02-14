@@ -106,6 +106,12 @@ struct Player {
   bool onGround = false;
 };
 
+struct Enemy {
+  glm::vec3 position{4.0f, 0.0f, -4.0f};
+  float halfSize = 0.45f;
+  float speed = 3.2f;
+};
+
 struct Platform {
   glm::vec3 position;
   glm::vec3 halfExtents;
@@ -241,6 +247,8 @@ int main() {
   const GLuint texture = BuildCheckerTexture();
 
   Player player;
+  const glm::vec3 playerSpawn{0.0f, 2.0f, 0.0f};
+  Enemy clown;
   const float gravity = -18.0f;
   const float moveSpeed = 5.0f;
   const float jumpSpeed = 7.0f;
@@ -356,6 +364,22 @@ int main() {
       }
     }
 
+    const float enemyGround = platforms[0].position.y + platforms[0].halfExtents.y + clown.halfSize;
+    glm::vec3 chaseDir = player.position - clown.position;
+    chaseDir.y = 0.0f;
+    if (glm::length(chaseDir) > 0.001f) {
+      chaseDir = glm::normalize(chaseDir);
+    }
+    clown.position += chaseDir * clown.speed * deltaTime;
+    clown.position.y = enemyGround;
+
+    const float hitDistance = player.halfSize + clown.halfSize + 0.1f;
+    if (glm::distance(player.position, clown.position) < hitDistance) {
+      player.position = playerSpawn;
+      player.velocity = glm::vec3(0.0f);
+      clown.position = glm::vec3(4.0f, enemyGround, -4.0f);
+    }
+
     const glm::vec3 cameraOffset = cameraForward * -cameraDistance + glm::vec3(0.0f, 2.0f, 0.0f);
     const glm::vec3 cameraPos = player.position + cameraOffset;
     const glm::mat4 view = glm::lookAt(cameraPos, player.position + glm::vec3(0.0f, 0.8f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
@@ -391,6 +415,13 @@ int main() {
     playerModel = glm::scale(playerModel, glm::vec3(player.halfSize * 2.0f));
     shader.SetMat4("uModel", playerModel);
     shader.SetVec3("uTint", glm::vec3(0.9f, 0.3f, 0.3f));
+    glDrawArrays(GL_TRIANGLES, 0, 36);
+
+    glm::mat4 clownModel(1.0f);
+    clownModel = glm::translate(clownModel, clown.position);
+    clownModel = glm::scale(clownModel, glm::vec3(clown.halfSize * 2.0f, clown.halfSize * 2.4f, clown.halfSize * 2.0f));
+    shader.SetMat4("uModel", clownModel);
+    shader.SetVec3("uTint", glm::vec3(0.95f, 0.2f, 0.2f));
     glDrawArrays(GL_TRIANGLES, 0, 36);
 
     glBindVertexArray(0);
