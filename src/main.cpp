@@ -663,9 +663,6 @@ int main() {
       const float legSwing = swing * size * 0.25f;
       const float armSwing = -swing * size * 0.3f;
 
-      DrawCube(basePos + glm::vec3(0.0f, legHeight * 0.5f, 0.0f),
-           glm::vec3(legWidth, legHeight, legWidth * 0.9f),
-           accentTint, accentTex);
       DrawCube(basePos + glm::vec3(legWidth * 1.2f, legHeight * 0.5f, legSwing),
            glm::vec3(legWidth, legHeight, legWidth * 0.9f),
            accentTint, accentTex);
