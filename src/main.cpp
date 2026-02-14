@@ -154,6 +154,187 @@ static GLuint BuildCheckerTexture() {
   return tex;
 }
 
+static GLuint BuildStripeTexture(unsigned char a, unsigned char b) {
+  const int size = 64;
+  std::vector<unsigned char> pixels(size * size * 3);
+  for (int y = 0; y < size; ++y) {
+    for (int x = 0; x < size; ++x) {
+      const int idx = (y * size + x) * 3;
+      const bool odd = ((x / 6) % 2) == 1;
+      const unsigned char color = odd ? a : b;
+      pixels[idx + 0] = color;
+      pixels[idx + 1] = color;
+      pixels[idx + 2] = color;
+    }
+  }
+
+  GLuint tex = 0;
+  glGenTextures(1, &tex);
+  glBindTexture(GL_TEXTURE_2D, tex);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, size, size, 0, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
+  glGenerateMipmap(GL_TEXTURE_2D);
+  glBindTexture(GL_TEXTURE_2D, 0);
+  return tex;
+}
+
+static GLuint BuildDotsTexture(unsigned char base, unsigned char dot) {
+  const int size = 64;
+  std::vector<unsigned char> pixels(size * size * 3, base);
+  for (int y = 0; y < size; ++y) {
+    for (int x = 0; x < size; ++x) {
+      const int cellX = x % 16;
+      const int cellY = y % 16;
+      const int dx = cellX - 8;
+      const int dy = cellY - 8;
+      if (dx * dx + dy * dy <= 16) {
+        const int idx = (y * size + x) * 3;
+        pixels[idx + 0] = dot;
+        pixels[idx + 1] = dot;
+        pixels[idx + 2] = dot;
+      }
+    }
+  }
+
+  GLuint tex = 0;
+  glGenTextures(1, &tex);
+  glBindTexture(GL_TEXTURE_2D, tex);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, size, size, 0, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
+  glGenerateMipmap(GL_TEXTURE_2D);
+  glBindTexture(GL_TEXTURE_2D, 0);
+  return tex;
+}
+
+static GLuint BuildPlankTexture() {
+  const int size = 128;
+  std::vector<unsigned char> pixels(size * size * 3);
+  for (int y = 0; y < size; ++y) {
+    for (int x = 0; x < size; ++x) {
+      const float fx = static_cast<float>(x) / static_cast<float>(size);
+      const float fy = static_cast<float>(y) / static_cast<float>(size);
+      const int plank = (x / 16) % 2;
+      const float grain = 0.12f * std::sin(fy * 40.0f + fx * 6.0f);
+      const float edge = (x % 16 == 0 || x % 16 == 15) ? -0.25f : 0.0f;
+      float base = 0.55f + grain + edge + (plank ? 0.05f : -0.03f);
+      base = glm::clamp(base, 0.2f, 0.9f);
+      const unsigned char r = static_cast<unsigned char>(base * 140.0f + 60.0f);
+      const unsigned char g = static_cast<unsigned char>(base * 110.0f + 50.0f);
+      const unsigned char b = static_cast<unsigned char>(base * 80.0f + 40.0f);
+      const int idx = (y * size + x) * 3;
+      pixels[idx + 0] = r;
+      pixels[idx + 1] = g;
+      pixels[idx + 2] = b;
+    }
+  }
+
+  GLuint tex = 0;
+  glGenTextures(1, &tex);
+  glBindTexture(GL_TEXTURE_2D, tex);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, size, size, 0, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
+  glGenerateMipmap(GL_TEXTURE_2D);
+  glBindTexture(GL_TEXTURE_2D, 0);
+  return tex;
+}
+
+static GLuint BuildFabricTexture(unsigned char base, unsigned char stripe) {
+  const int size = 128;
+  std::vector<unsigned char> pixels(size * size * 3);
+  for (int y = 0; y < size; ++y) {
+    for (int x = 0; x < size; ++x) {
+      const int idx = (y * size + x) * 3;
+      const bool band = ((x / 10) % 2) == 0;
+      const int weave = ((x % 4) == 0 || (y % 4) == 0) ? -8 : 0;
+      const unsigned char c = static_cast<unsigned char>(glm::clamp<int>(base + (band ? stripe : 0) + weave, 20, 230));
+      pixels[idx + 0] = c;
+      pixels[idx + 1] = static_cast<unsigned char>(glm::clamp<int>(c - 10, 0, 255));
+      pixels[idx + 2] = static_cast<unsigned char>(glm::clamp<int>(c - 20, 0, 255));
+    }
+  }
+
+  GLuint tex = 0;
+  glGenTextures(1, &tex);
+  glBindTexture(GL_TEXTURE_2D, tex);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, size, size, 0, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
+  glGenerateMipmap(GL_TEXTURE_2D);
+  glBindTexture(GL_TEXTURE_2D, 0);
+  return tex;
+}
+
+static GLuint BuildSkinTexture() {
+  const int size = 64;
+  std::vector<unsigned char> pixels(size * size * 3);
+  for (int y = 0; y < size; ++y) {
+    for (int x = 0; x < size; ++x) {
+      const float fx = static_cast<float>(x) / static_cast<float>(size);
+      const float fy = static_cast<float>(y) / static_cast<float>(size);
+      const float vignette = 0.85f + 0.2f * (1.0f - std::abs(fx - 0.5f) * 2.0f);
+      const float freckles = ((x + y * 7) % 17 == 0) ? -0.08f : 0.0f;
+      float base = 0.86f * vignette + freckles;
+      base = glm::clamp(base, 0.6f, 0.95f);
+      const int idx = (y * size + x) * 3;
+      pixels[idx + 0] = static_cast<unsigned char>(base * 230.0f + 10.0f);
+      pixels[idx + 1] = static_cast<unsigned char>(base * 190.0f + 15.0f);
+      pixels[idx + 2] = static_cast<unsigned char>(base * 160.0f + 20.0f);
+    }
+  }
+
+  GLuint tex = 0;
+  glGenTextures(1, &tex);
+  glBindTexture(GL_TEXTURE_2D, tex);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, size, size, 0, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
+  glGenerateMipmap(GL_TEXTURE_2D);
+  glBindTexture(GL_TEXTURE_2D, 0);
+  return tex;
+}
+
+static GLuint BuildMetalTexture() {
+  const int size = 64;
+  std::vector<unsigned char> pixels(size * size * 3);
+  for (int y = 0; y < size; ++y) {
+    for (int x = 0; x < size; ++x) {
+      const float fx = static_cast<float>(x) / static_cast<float>(size);
+      const float streak = 0.1f * std::sin(fx * 24.0f) + 0.05f * std::sin(fx * 60.0f);
+      float base = 0.75f + streak;
+      base = glm::clamp(base, 0.55f, 0.9f);
+      const int idx = (y * size + x) * 3;
+      pixels[idx + 0] = static_cast<unsigned char>(base * 220.0f);
+      pixels[idx + 1] = static_cast<unsigned char>(base * 220.0f);
+      pixels[idx + 2] = static_cast<unsigned char>(base * 235.0f);
+    }
+  }
+
+  GLuint tex = 0;
+  glGenTextures(1, &tex);
+  glBindTexture(GL_TEXTURE_2D, tex);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, size, size, 0, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
+  glGenerateMipmap(GL_TEXTURE_2D);
+  glBindTexture(GL_TEXTURE_2D, 0);
+  return tex;
+}
+
 int main() {
   if (!glfwInit()) {
     std::cerr << "Failed to initialize GLFW\n";
@@ -248,7 +429,13 @@ int main() {
   glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), reinterpret_cast<void*>(3 * sizeof(float)));
   glBindVertexArray(0);
 
-  const GLuint texture = BuildCheckerTexture();
+  const GLuint platformTexture = BuildPlankTexture();
+  const GLuint playerTexture = BuildFabricTexture(90, 70);
+  const GLuint playerSkinTexture = BuildSkinTexture();
+  const GLuint clownTexture = BuildFabricTexture(160, 40);
+  const GLuint clownSkinTexture = BuildSkinTexture();
+  const GLuint clownAccentTexture = BuildDotsTexture(220, 60);
+  const GLuint knifeTexture = BuildMetalTexture();
 
   Player player;
   const glm::vec3 playerSpawn{0.0f, 2.0f, 0.0f};
@@ -445,31 +632,77 @@ int main() {
     shader.SetMat4("uProj", proj);
 
     glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, texture);
     glBindVertexArray(vao);
 
-    for (const Platform& platform : platforms) {
+    auto DrawCube = [&](const glm::vec3& position, const glm::vec3& scale, const glm::vec3& tint, GLuint tex) {
+      glBindTexture(GL_TEXTURE_2D, tex);
       glm::mat4 model(1.0f);
-      model = glm::translate(model, platform.position);
-      model = glm::scale(model, platform.halfExtents * 2.0f);
+      model = glm::translate(model, position);
+      model = glm::scale(model, scale);
       shader.SetMat4("uModel", model);
-      shader.SetVec3("uTint", platform.tint);
+      shader.SetVec3("uTint", tint);
       glDrawArrays(GL_TRIANGLES, 0, 36);
+    };
+
+    for (const Platform& platform : platforms) {
+      DrawCube(platform.position, platform.halfExtents * 2.0f, platform.tint, platformTexture);
     }
 
-    glm::mat4 playerModel(1.0f);
-    playerModel = glm::translate(playerModel, player.position);
-    playerModel = glm::scale(playerModel, glm::vec3(player.halfSize * 2.0f));
-    shader.SetMat4("uModel", playerModel);
-    shader.SetVec3("uTint", glm::vec3(0.9f, 0.3f, 0.3f));
-    glDrawArrays(GL_TRIANGLES, 0, 36);
+    auto DrawHumanoid = [&](const glm::vec3& basePos, float size, const glm::vec3& bodyTint,
+                const glm::vec3& skinTint, const glm::vec3& accentTint,
+                GLuint bodyTex, GLuint skinTex, GLuint accentTex) {
+      const float torsoHeight = size * 1.2f;
+      const float torsoWidth = size * 0.75f;
+      const float legHeight = size * 0.9f;
+      const float legWidth = size * 0.28f;
+      const float armHeight = size * 0.75f;
+      const float armWidth = size * 0.22f;
+      const float headSize = size * 0.55f;
 
-    glm::mat4 clownModel(1.0f);
-    clownModel = glm::translate(clownModel, clown.position);
-    clownModel = glm::scale(clownModel, glm::vec3(clown.halfSize * 2.0f, clown.halfSize * 2.4f, clown.halfSize * 2.0f));
-    shader.SetMat4("uModel", clownModel);
-    shader.SetVec3("uTint", glm::vec3(0.95f, 0.2f, 0.2f));
-    glDrawArrays(GL_TRIANGLES, 0, 36);
+      DrawCube(basePos + glm::vec3(0.0f, legHeight * 0.5f, 0.0f),
+           glm::vec3(legWidth, legHeight, legWidth * 0.9f),
+           accentTint, accentTex);
+      DrawCube(basePos + glm::vec3(legWidth * 1.2f, legHeight * 0.5f, 0.0f),
+           glm::vec3(legWidth, legHeight, legWidth * 0.9f),
+           accentTint, accentTex);
+
+      DrawCube(basePos + glm::vec3(-legWidth * 1.2f, legHeight * 0.5f, 0.0f),
+           glm::vec3(legWidth, legHeight, legWidth * 0.9f),
+           accentTint, accentTex);
+
+      DrawCube(basePos + glm::vec3(0.0f, legHeight + torsoHeight * 0.5f, 0.0f),
+           glm::vec3(torsoWidth, torsoHeight, torsoWidth * 0.75f),
+           bodyTint, bodyTex);
+
+      DrawCube(basePos + glm::vec3(torsoWidth * 0.85f, legHeight + torsoHeight * 0.7f, 0.0f),
+           glm::vec3(armWidth, armHeight, armWidth * 0.9f),
+           bodyTint, bodyTex);
+      DrawCube(basePos + glm::vec3(-torsoWidth * 0.85f, legHeight + torsoHeight * 0.7f, 0.0f),
+           glm::vec3(armWidth, armHeight, armWidth * 0.9f),
+           bodyTint, bodyTex);
+
+      DrawCube(basePos + glm::vec3(0.0f, legHeight + torsoHeight + headSize * 0.55f, 0.0f),
+           glm::vec3(headSize, headSize, headSize),
+           skinTint, skinTex);
+    };
+
+    const float playerSize = player.halfSize * 2.0f;
+    DrawHumanoid(player.position, playerSize,
+           glm::vec3(0.35f, 0.55f, 0.9f),
+           glm::vec3(0.95f, 0.85f, 0.75f),
+           glm::vec3(0.2f, 0.2f, 0.25f),
+           playerTexture, playerSkinTexture, playerTexture);
+
+    const float clownSize = clown.halfSize * 2.0f;
+    DrawHumanoid(clown.position, clownSize,
+           glm::vec3(0.95f, 0.2f, 0.2f),
+           glm::vec3(1.0f, 0.9f, 0.85f),
+           glm::vec3(0.2f, 0.2f, 0.2f),
+           clownTexture, clownSkinTexture, clownAccentTexture);
+
+    DrawCube(clown.position + glm::vec3(clownSize * 0.9f, clownSize * 1.1f, 0.0f),
+         glm::vec3(clownSize * 0.15f, clownSize * 0.35f, clownSize * 0.6f),
+         glm::vec3(0.85f, 0.85f, 0.9f), knifeTexture);
 
     glBindVertexArray(0);
 
@@ -478,7 +711,13 @@ int main() {
 
   glDeleteVertexArrays(1, &vao);
   glDeleteBuffers(1, &vbo);
-  glDeleteTextures(1, &texture);
+  glDeleteTextures(1, &platformTexture);
+  glDeleteTextures(1, &playerTexture);
+  glDeleteTextures(1, &playerSkinTexture);
+  glDeleteTextures(1, &clownTexture);
+  glDeleteTextures(1, &clownSkinTexture);
+  glDeleteTextures(1, &clownAccentTexture);
+  glDeleteTextures(1, &knifeTexture);
   glfwTerminate();
   return 0;
 }
