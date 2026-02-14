@@ -462,6 +462,9 @@ int main() {
   float cameraDistance = 6.0f;
   float playerFacing = 0.0f;
   float clownFacing = 0.0f;
+  glm::vec3 cameraPosSmooth(0.0f);
+  glm::vec3 cameraTargetSmooth(0.0f);
+  bool cameraInitialized = false;
 
   shader.Use();
   shader.SetInt("uTexture", 0);
@@ -620,8 +623,18 @@ int main() {
     }
 
     const glm::vec3 cameraOffset = cameraForward * -cameraDistance + glm::vec3(0.0f, 2.0f, 0.0f);
-    const glm::vec3 cameraPos = player.position + cameraOffset;
-    const glm::mat4 view = glm::lookAt(cameraPos, player.position + glm::vec3(0.0f, 0.8f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+    const glm::vec3 cameraTarget = player.position + glm::vec3(0.0f, 0.9f, 0.0f);
+    const glm::vec3 cameraPosTarget = player.position + cameraOffset;
+    const float smoothStrength = 10.0f;
+    const float smoothAlpha = 1.0f - std::exp(-smoothStrength * deltaTime);
+    if (!cameraInitialized) {
+      cameraPosSmooth = cameraPosTarget;
+      cameraTargetSmooth = cameraTarget;
+      cameraInitialized = true;
+    }
+    cameraPosSmooth = glm::mix(cameraPosSmooth, cameraPosTarget, smoothAlpha);
+    cameraTargetSmooth = glm::mix(cameraTargetSmooth, cameraTarget, smoothAlpha);
+    const glm::mat4 view = glm::lookAt(cameraPosSmooth, cameraTargetSmooth, glm::vec3(0.0f, 1.0f, 0.0f));
 
     int width = 0;
     int height = 0;
@@ -635,7 +648,7 @@ int main() {
     shader.Use();
     shader.SetMat4("uView", view);
     shader.SetMat4("uProj", proj);
-    shader.SetVec3("uViewPos", cameraPos);
+    shader.SetVec3("uViewPos", cameraPosSmooth);
     shader.SetVec3("uLightDir", glm::normalize(glm::vec3(-0.4f, -1.0f, -0.2f)));
     shader.SetVec3("uLightColor", glm::vec3(1.0f, 0.98f, 0.95f));
     shader.SetVec3("uAmbient", glm::vec3(0.2f, 0.2f, 0.22f));
@@ -674,13 +687,19 @@ int main() {
       const float armWidth = size * 0.22f;
       const float headSize = size * 0.55f;
       const float swing = std::sin(walkPhase) * walkAmount;
-      const float legSwing = swing * size * 0.25f;
-      const float armSwing = -swing * size * 0.3f;
+      const float legSwing = swing * size * 0.18f;
+      const float armSwing = -swing * size * 0.22f;
+      const float legRot = swing * 0.9f;
+      const float armRot = -swing * 1.1f;
+      const float torsoSway = swing * size * 0.08f;
+      const float bob = std::sin(walkPhase * 2.0f) * walkAmount * size * 0.06f;
+      const float idleBreath = std::sin(walkPhase * 0.6f) * (1.0f - walkAmount) * size * 0.03f;
+      const glm::vec3 rootPos = basePos + glm::vec3(0.0f, bob + idleBreath, 0.0f);
 
       auto DrawPart = [&](const glm::vec3& localPos, const glm::vec3& scale, const glm::vec3& tint, GLuint tex) {
         glBindTexture(GL_TEXTURE_2D, tex);
         glm::mat4 model(1.0f);
-        model = glm::translate(model, basePos);
+        model = glm::translate(model, rootPos);
         model = glm::rotate(model, faceYaw, glm::vec3(0.0f, 1.0f, 0.0f));
         model = glm::translate(model, localPos);
         model = glm::scale(model, scale);
@@ -690,26 +709,42 @@ int main() {
         glDrawArrays(GL_TRIANGLES, 0, 36);
       };
 
-      DrawPart(glm::vec3(legWidth * 1.2f, legHeight * 0.5f, legSwing),
-               glm::vec3(legWidth, legHeight, legWidth * 0.9f),
-               accentTint, accentTex);
+      auto DrawLimb = [&](const glm::vec3& jointPos, float length, float width, float depth,
+                          const glm::vec3& tint, GLuint tex, float rotAngle) {
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glm::mat4 model(1.0f);
+        model = glm::translate(model, rootPos);
+        model = glm::rotate(model, faceYaw, glm::vec3(0.0f, 1.0f, 0.0f));
+        model = glm::translate(model, jointPos);
+        model = glm::rotate(model, rotAngle, glm::vec3(1.0f, 0.0f, 0.0f));
+        model = glm::translate(model, glm::vec3(0.0f, -length * 0.5f, 0.0f));
+        model = glm::scale(model, glm::vec3(width, length, depth));
+        shader.SetMat4("uModel", model);
+        shader.SetMat3("uNormalMatrix", glm::transpose(glm::inverse(glm::mat3(model))));
+        shader.SetVec3("uTint", tint);
+        glDrawArrays(GL_TRIANGLES, 0, 36);
+      };
 
-      DrawPart(glm::vec3(-legWidth * 1.2f, legHeight * 0.5f, -legSwing),
-               glm::vec3(legWidth, legHeight, legWidth * 0.9f),
-               accentTint, accentTex);
+      DrawLimb(glm::vec3(legWidth * 1.2f, legHeight, legSwing),
+               legHeight, legWidth, legWidth * 0.9f,
+               accentTint, accentTex, legRot);
 
-      DrawPart(glm::vec3(0.0f, legHeight + torsoHeight * 0.5f, 0.0f),
+      DrawLimb(glm::vec3(-legWidth * 1.2f, legHeight, -legSwing),
+               legHeight, legWidth, legWidth * 0.9f,
+               accentTint, accentTex, -legRot);
+
+      DrawPart(glm::vec3(0.0f, legHeight + torsoHeight * 0.5f, torsoSway),
                glm::vec3(torsoWidth, torsoHeight, torsoWidth * 0.75f),
                bodyTint, bodyTex);
 
-      DrawPart(glm::vec3(torsoWidth * 0.85f, legHeight + torsoHeight * 0.7f, armSwing),
-               glm::vec3(armWidth, armHeight, armWidth * 0.9f),
-               bodyTint, bodyTex);
-      DrawPart(glm::vec3(-torsoWidth * 0.85f, legHeight + torsoHeight * 0.7f, -armSwing),
-               glm::vec3(armWidth, armHeight, armWidth * 0.9f),
-               bodyTint, bodyTex);
+      DrawLimb(glm::vec3(torsoWidth * 0.85f, legHeight + torsoHeight * 0.95f, armSwing + torsoSway),
+           armHeight, armWidth, armWidth * 0.9f,
+           bodyTint, bodyTex, armRot);
+      DrawLimb(glm::vec3(-torsoWidth * 0.85f, legHeight + torsoHeight * 0.95f, -armSwing + torsoSway),
+           armHeight, armWidth, armWidth * 0.9f,
+           bodyTint, bodyTex, -armRot);
 
-      DrawPart(glm::vec3(0.0f, legHeight + torsoHeight + headSize * 0.55f, 0.0f),
+      DrawPart(glm::vec3(0.0f, legHeight + torsoHeight + headSize * 0.55f, torsoSway * 1.4f),
                glm::vec3(headSize, headSize, headSize),
                skinTint, skinTex);
     };
@@ -725,7 +760,7 @@ int main() {
            glm::vec3(0.95f, 0.85f, 0.75f),
            glm::vec3(0.2f, 0.2f, 0.25f),
            playerTexture, playerSkinTexture, playerTexture,
-                 currentTime * (2.5f + playerWalk * 6.0f), playerWalk, playerFacing);
+           currentTime * (2.5f + playerWalk * 6.0f), playerWalk, playerFacing);
 
     const float clownSize = clown.halfSize * 2.0f;
     const float clownSpeed = glm::length(glm::vec2(clown.velocity.x, clown.velocity.z));
@@ -738,18 +773,32 @@ int main() {
            glm::vec3(1.0f, 0.9f, 0.85f),
            glm::vec3(0.2f, 0.2f, 0.2f),
            clownTexture, clownSkinTexture, clownAccentTexture,
-                 currentTime * (2.5f + clownWalk * 6.0f), clownWalk, clownFacing);
+           currentTime * (2.5f + clownWalk * 6.0f), clownWalk, clownFacing);
 
-    const float clownCos = std::cos(clownFacing);
-    const float clownSin = std::sin(clownFacing);
-    const glm::vec3 knifeOffsetLocal(clownSize * 0.9f, clownSize * 1.1f, 0.0f);
-    const glm::vec3 knifeOffset(
-      knifeOffsetLocal.x * clownCos + knifeOffsetLocal.z * clownSin,
-      knifeOffsetLocal.y,
-      -knifeOffsetLocal.x * clownSin + knifeOffsetLocal.z * clownCos);
-    DrawCube(clown.position + knifeOffset,
-         glm::vec3(clownSize * 0.15f, clownSize * 0.35f, clownSize * 0.6f),
-         glm::vec3(0.85f, 0.85f, 0.9f), knifeTexture);
+    const float clownSwing = std::sin(currentTime * (2.5f + clownWalk * 6.0f)) * clownWalk;
+    const float clownArmRot = -clownSwing * 1.1f;
+    const float clownTorsoHeight = clownSize * 1.2f;
+    const float clownTorsoWidth = clownSize * 0.75f;
+    const float clownLegHeight = clownSize * 0.9f;
+    const float clownArmHeight = clownSize * 0.75f;
+    const float clownArmSwing = -clownSwing * clownSize * 0.22f;
+    const float clownTorsoSway = clownSwing * clownSize * 0.08f;
+    const glm::vec3 clownRoot = clown.position;
+
+    glm::mat4 handModel(1.0f);
+    handModel = glm::translate(handModel, clownRoot);
+    handModel = glm::rotate(handModel, clownFacing, glm::vec3(0.0f, 1.0f, 0.0f));
+    handModel = glm::translate(handModel, glm::vec3(clownTorsoWidth * 0.85f,
+                            clownLegHeight + clownTorsoHeight * 0.95f,
+                            clownArmSwing + clownTorsoSway));
+    handModel = glm::rotate(handModel, clownArmRot, glm::vec3(1.0f, 0.0f, 0.0f));
+    handModel = glm::translate(handModel, glm::vec3(0.0f, -clownArmHeight * 0.9f, 0.0f));
+    handModel = glm::scale(handModel, glm::vec3(clownSize * 0.15f, clownSize * 0.35f, clownSize * 0.6f));
+    shader.SetMat4("uModel", handModel);
+    shader.SetMat3("uNormalMatrix", glm::transpose(glm::inverse(glm::mat3(handModel))));
+    shader.SetVec3("uTint", glm::vec3(0.85f, 0.85f, 0.9f));
+    glBindTexture(GL_TEXTURE_2D, knifeTexture);
+    glDrawArrays(GL_TRIANGLES, 0, 36);
 
     glBindVertexArray(0);
 
