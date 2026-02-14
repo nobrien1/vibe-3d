@@ -448,7 +448,15 @@ int main() {
   Enemy clown;
   const float gravity = -18.0f;
   const float moveSpeed = 5.0f;
+  const float sprintMultiplier = 1.6f;
+  const float accelGround = 24.0f;
+  const float accelAir = 10.0f;
   const float jumpSpeed = 7.0f;
+  const float coyoteTimeMax = 0.12f;
+  const float jumpBufferMax = 0.12f;
+  float coyoteTimer = 0.0f;
+  float jumpBufferTimer = 0.0f;
+  float stamina = 1.0f;
 
   std::vector<Platform> platforms = {
       {{0.0f, -1.0f, 0.0f}, {10.0f, 0.5f, 10.0f}, {0.6f, 0.7f, 0.8f}},
@@ -465,6 +473,8 @@ int main() {
   glm::vec3 cameraPosSmooth(0.0f);
   glm::vec3 cameraTargetSmooth(0.0f);
   bool cameraInitialized = false;
+  float playerWalkCycle = 0.0f;
+  float clownWalkCycle = 0.0f;
 
   shader.Use();
   shader.SetInt("uTexture", 0);
@@ -528,13 +538,22 @@ int main() {
       inputDir = glm::normalize(inputDir);
     }
 
-    player.velocity.x = inputDir.x * moveSpeed;
-    player.velocity.z = inputDir.z * moveSpeed;
+    const bool wantsSprint = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS && stamina > 0.05f;
+    const float targetSpeed = moveSpeed * (wantsSprint ? sprintMultiplier : 1.0f);
+    const float accel = player.onGround ? accelGround : accelAir;
+    const glm::vec3 targetVel = inputDir * targetSpeed;
+    player.velocity.x = glm::mix(player.velocity.x, targetVel.x, glm::clamp(accel * deltaTime, 0.0f, 1.0f));
+    player.velocity.z = glm::mix(player.velocity.z, targetVel.z, glm::clamp(accel * deltaTime, 0.0f, 1.0f));
     player.velocity.y += gravity * deltaTime;
 
-    if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS && player.onGround) {
-      player.velocity.y = jumpSpeed;
-      player.onGround = false;
+    if (wantsSprint && glm::length(inputDir) > 0.1f) {
+      stamina = glm::max(0.0f, stamina - deltaTime * 0.45f);
+    } else {
+      stamina = glm::min(1.0f, stamina + deltaTime * 0.35f);
+    }
+
+    if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
+      jumpBufferTimer = jumpBufferMax;
     }
 
     player.position += player.velocity * deltaTime;
@@ -563,15 +582,55 @@ int main() {
       }
     }
 
+    if (player.onGround) {
+      coyoteTimer = coyoteTimeMax;
+    } else {
+      coyoteTimer = glm::max(0.0f, coyoteTimer - deltaTime);
+    }
+    jumpBufferTimer = glm::max(0.0f, jumpBufferTimer - deltaTime);
+
+    if (jumpBufferTimer > 0.0f && coyoteTimer > 0.0f) {
+      player.velocity.y = jumpSpeed;
+      player.onGround = false;
+      coyoteTimer = 0.0f;
+      jumpBufferTimer = 0.0f;
+    }
+
     const float enemyGround = platforms[0].position.y + platforms[0].halfExtents.y + clown.halfSize;
-    glm::vec3 chaseDir = player.position - clown.position;
+    const float playerDistance = glm::length(player.position - clown.position);
+    const float aggroRange = 18.0f;
+    const bool hasLineOfSight = playerDistance < aggroRange;
+    glm::vec3 aiTarget = player.position;
+
+    if (hasLineOfSight && player.position.y > clown.position.y + 0.6f) {
+      float bestScore = 1e9f;
+      for (const Platform& platform : platforms) {
+        const float platformTop = platform.position.y + platform.halfExtents.y + clown.halfSize;
+        if (platformTop > clown.position.y + 0.4f && platformTop <= player.position.y + 0.3f) {
+          const float distToPlayer = glm::length(glm::vec2(platform.position.x - player.position.x,
+                                                           platform.position.z - player.position.z));
+          const float distToClown = glm::length(glm::vec2(platform.position.x - clown.position.x,
+                                                          platform.position.z - clown.position.z));
+          const float score = distToPlayer + distToClown * 0.4f + std::abs(platformTop - player.position.y);
+          if (score < bestScore) {
+            bestScore = score;
+            aiTarget = glm::vec3(platform.position.x, platformTop, platform.position.z);
+          }
+        }
+      }
+    }
+
+    glm::vec3 chaseDir = aiTarget - clown.position;
     chaseDir.y = 0.0f;
     if (glm::length(chaseDir) > 0.001f) {
       chaseDir = glm::normalize(chaseDir);
     }
 
-    clown.velocity.x = chaseDir.x * clown.speed;
-    clown.velocity.z = chaseDir.z * clown.speed;
+    const float closeRange = 4.5f;
+    const float speedRamp = 1.0f + glm::clamp((closeRange - playerDistance) / closeRange, 0.0f, 1.0f) * 0.6f;
+    const float clownChaseSpeed = clown.speed * speedRamp * 1.15f;
+    clown.velocity.x = chaseDir.x * clownChaseSpeed;
+    clown.velocity.z = chaseDir.z * clownChaseSpeed;
     clown.velocity.y += gravity * deltaTime;
 
     if (clown.jumpCooldown > 0.0f) {
@@ -581,11 +640,11 @@ int main() {
     const float playerHeightGap = player.position.y - clown.position.y;
     const float playerHorizDist = glm::length(glm::vec2(player.position.x - clown.position.x,
                                                        player.position.z - clown.position.z));
-    if (clown.onGround && clown.jumpCooldown <= 0.0f && playerHeightGap > 0.4f && playerHorizDist < 5.5f) {
+    if (clown.onGround && clown.jumpCooldown <= 0.0f && playerHeightGap > 0.2f && playerHorizDist < 6.5f) {
       const float jumpHeight = glm::clamp(playerHeightGap + 0.4f, 0.8f, 2.4f);
       const float jumpVelocity = std::sqrt(2.0f * -gravity * jumpHeight);
       clown.velocity.y = jumpVelocity;
-      clown.jumpCooldown = 0.6f;
+      clown.jumpCooldown = 0.45f;
     }
 
     clown.position += clown.velocity * deltaTime;
@@ -752,6 +811,7 @@ int main() {
     const float playerSize = player.halfSize * 2.0f;
     const float playerSpeed = glm::length(glm::vec2(player.velocity.x, player.velocity.z));
     const float playerWalk = glm::clamp(playerSpeed / moveSpeed, 0.0f, 1.0f);
+    playerWalkCycle += playerWalk * (2.5f + playerWalk * 6.0f) * deltaTime;
     if (playerSpeed > 0.05f) {
       playerFacing = std::atan2(player.velocity.x, player.velocity.z);
     }
@@ -760,11 +820,12 @@ int main() {
            glm::vec3(0.95f, 0.85f, 0.75f),
            glm::vec3(0.2f, 0.2f, 0.25f),
            playerTexture, playerSkinTexture, playerTexture,
-           currentTime * (2.5f + playerWalk * 6.0f), playerWalk, playerFacing);
+                 playerWalkCycle, playerWalk, playerFacing);
 
     const float clownSize = clown.halfSize * 2.0f;
     const float clownSpeed = glm::length(glm::vec2(clown.velocity.x, clown.velocity.z));
     const float clownWalk = glm::clamp(clownSpeed / clown.speed, 0.0f, 1.0f);
+    clownWalkCycle += clownWalk * (2.5f + clownWalk * 6.0f) * deltaTime;
     if (clownSpeed > 0.05f) {
       clownFacing = std::atan2(clown.velocity.x, clown.velocity.z);
     }
@@ -773,9 +834,9 @@ int main() {
            glm::vec3(1.0f, 0.9f, 0.85f),
            glm::vec3(0.2f, 0.2f, 0.2f),
            clownTexture, clownSkinTexture, clownAccentTexture,
-           currentTime * (2.5f + clownWalk * 6.0f), clownWalk, clownFacing);
+                 clownWalkCycle, clownWalk, clownFacing);
 
-    const float clownSwing = std::sin(currentTime * (2.5f + clownWalk * 6.0f)) * clownWalk;
+    const float clownSwing = std::sin(clownWalkCycle) * clownWalk;
     const float clownArmRot = -clownSwing * 1.1f;
     const float clownTorsoHeight = clownSize * 1.2f;
     const float clownTorsoWidth = clownSize * 0.75f;
