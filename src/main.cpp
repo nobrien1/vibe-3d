@@ -5,6 +5,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
+#include <cmath>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -108,8 +109,11 @@ struct Player {
 
 struct Enemy {
   glm::vec3 position{4.0f, 0.0f, -4.0f};
+  glm::vec3 velocity{0.0f};
   float halfSize = 0.45f;
   float speed = 3.2f;
+  bool onGround = false;
+  float jumpCooldown = 0.0f;
 };
 
 struct Platform {
@@ -370,14 +374,57 @@ int main() {
     if (glm::length(chaseDir) > 0.001f) {
       chaseDir = glm::normalize(chaseDir);
     }
-    clown.position += chaseDir * clown.speed * deltaTime;
-    clown.position.y = enemyGround;
+
+    clown.velocity.x = chaseDir.x * clown.speed;
+    clown.velocity.z = chaseDir.z * clown.speed;
+    clown.velocity.y += gravity * deltaTime;
+
+    if (clown.jumpCooldown > 0.0f) {
+      clown.jumpCooldown -= deltaTime;
+    }
+
+    const float playerHeightGap = player.position.y - clown.position.y;
+    const float playerHorizDist = glm::length(glm::vec2(player.position.x - clown.position.x,
+                                                       player.position.z - clown.position.z));
+    if (clown.onGround && clown.jumpCooldown <= 0.0f && playerHeightGap > 0.4f && playerHorizDist < 5.5f) {
+      const float jumpHeight = glm::clamp(playerHeightGap + 0.4f, 0.8f, 2.4f);
+      const float jumpVelocity = std::sqrt(2.0f * -gravity * jumpHeight);
+      clown.velocity.y = jumpVelocity;
+      clown.jumpCooldown = 0.6f;
+    }
+
+    clown.position += clown.velocity * deltaTime;
+
+    clown.onGround = false;
+    if (clown.position.y < enemyGround) {
+      clown.position.y = enemyGround;
+      clown.velocity.y = 0.0f;
+      clown.onGround = true;
+    }
+
+    for (size_t i = 1; i < platforms.size(); ++i) {
+      const Platform& platform = platforms[i];
+      const float platformTop = platform.position.y + platform.halfExtents.y;
+      const bool withinX = std::abs(clown.position.x - platform.position.x) <= (platform.halfExtents.x + clown.halfSize);
+      const bool withinZ = std::abs(clown.position.z - platform.position.z) <= (platform.halfExtents.z + clown.halfSize);
+      const bool falling = clown.velocity.y <= 0.0f;
+      if (withinX && withinZ && falling) {
+        const float clownBottom = clown.position.y - clown.halfSize;
+        if (clownBottom < platformTop && clown.position.y > platformTop - 0.6f) {
+          clown.position.y = platformTop + clown.halfSize;
+          clown.velocity.y = 0.0f;
+          clown.onGround = true;
+        }
+      }
+    }
 
     const float hitDistance = player.halfSize + clown.halfSize + 0.1f;
     if (glm::distance(player.position, clown.position) < hitDistance) {
       player.position = playerSpawn;
       player.velocity = glm::vec3(0.0f);
       clown.position = glm::vec3(4.0f, enemyGround, -4.0f);
+      clown.velocity = glm::vec3(0.0f);
+      clown.onGround = true;
     }
 
     const glm::vec3 cameraOffset = cameraForward * -cameraDistance + glm::vec3(0.0f, 2.0f, 0.0f);
