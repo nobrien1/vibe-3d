@@ -95,6 +95,10 @@ struct Shader {
     glUniform3fv(glGetUniformLocation(id, name), 1, glm::value_ptr(value));
   }
 
+  void SetMat3(const char* name, const glm::mat3& value) const {
+    glUniformMatrix3fv(glGetUniformLocation(id, name), 1, GL_FALSE, glm::value_ptr(value));
+  }
+
   void SetInt(const char* name, int value) const {
     glUniform1i(glGetUniformLocation(id, name), value);
   }
@@ -371,50 +375,50 @@ int main() {
     return 1;
   }
 
-  const float cubeVertices[] = {
-      // positions          // uvs
-      -0.5f, -0.5f, -0.5f,   0.0f, 0.0f,
-       0.5f, -0.5f, -0.5f,   1.0f, 0.0f,
-       0.5f,  0.5f, -0.5f,   1.0f, 1.0f,
-       0.5f,  0.5f, -0.5f,   1.0f, 1.0f,
-      -0.5f,  0.5f, -0.5f,   0.0f, 1.0f,
-      -0.5f, -0.5f, -0.5f,   0.0f, 0.0f,
+    const float cubeVertices[] = {
+      // positions          // normals           // uvs
+      -0.5f, -0.5f, -0.5f,   0.0f,  0.0f, -1.0f,  0.0f, 0.0f,
+       0.5f, -0.5f, -0.5f,   0.0f,  0.0f, -1.0f,  1.0f, 0.0f,
+       0.5f,  0.5f, -0.5f,   0.0f,  0.0f, -1.0f,  1.0f, 1.0f,
+       0.5f,  0.5f, -0.5f,   0.0f,  0.0f, -1.0f,  1.0f, 1.0f,
+      -0.5f,  0.5f, -0.5f,   0.0f,  0.0f, -1.0f,  0.0f, 1.0f,
+      -0.5f, -0.5f, -0.5f,   0.0f,  0.0f, -1.0f,  0.0f, 0.0f,
 
-      -0.5f, -0.5f,  0.5f,   0.0f, 0.0f,
-       0.5f, -0.5f,  0.5f,   1.0f, 0.0f,
-       0.5f,  0.5f,  0.5f,   1.0f, 1.0f,
-       0.5f,  0.5f,  0.5f,   1.0f, 1.0f,
-      -0.5f,  0.5f,  0.5f,   0.0f, 1.0f,
-      -0.5f, -0.5f,  0.5f,   0.0f, 0.0f,
+      -0.5f, -0.5f,  0.5f,   0.0f,  0.0f,  1.0f,  0.0f, 0.0f,
+       0.5f, -0.5f,  0.5f,   0.0f,  0.0f,  1.0f,  1.0f, 0.0f,
+       0.5f,  0.5f,  0.5f,   0.0f,  0.0f,  1.0f,  1.0f, 1.0f,
+       0.5f,  0.5f,  0.5f,   0.0f,  0.0f,  1.0f,  1.0f, 1.0f,
+      -0.5f,  0.5f,  0.5f,   0.0f,  0.0f,  1.0f,  0.0f, 1.0f,
+      -0.5f, -0.5f,  0.5f,   0.0f,  0.0f,  1.0f,  0.0f, 0.0f,
 
-      -0.5f,  0.5f,  0.5f,   1.0f, 0.0f,
-      -0.5f,  0.5f, -0.5f,   1.0f, 1.0f,
-      -0.5f, -0.5f, -0.5f,   0.0f, 1.0f,
-      -0.5f, -0.5f, -0.5f,   0.0f, 1.0f,
-      -0.5f, -0.5f,  0.5f,   0.0f, 0.0f,
-      -0.5f,  0.5f,  0.5f,   1.0f, 0.0f,
+      -0.5f,  0.5f,  0.5f,  -1.0f,  0.0f,  0.0f,  1.0f, 0.0f,
+      -0.5f,  0.5f, -0.5f,  -1.0f,  0.0f,  0.0f,  1.0f, 1.0f,
+      -0.5f, -0.5f, -0.5f,  -1.0f,  0.0f,  0.0f,  0.0f, 1.0f,
+      -0.5f, -0.5f, -0.5f,  -1.0f,  0.0f,  0.0f,  0.0f, 1.0f,
+      -0.5f, -0.5f,  0.5f,  -1.0f,  0.0f,  0.0f,  0.0f, 0.0f,
+      -0.5f,  0.5f,  0.5f,  -1.0f,  0.0f,  0.0f,  1.0f, 0.0f,
 
-       0.5f,  0.5f,  0.5f,   1.0f, 0.0f,
-       0.5f,  0.5f, -0.5f,   1.0f, 1.0f,
-       0.5f, -0.5f, -0.5f,   0.0f, 1.0f,
-       0.5f, -0.5f, -0.5f,   0.0f, 1.0f,
-       0.5f, -0.5f,  0.5f,   0.0f, 0.0f,
-       0.5f,  0.5f,  0.5f,   1.0f, 0.0f,
+       0.5f,  0.5f,  0.5f,   1.0f,  0.0f,  0.0f,  1.0f, 0.0f,
+       0.5f,  0.5f, -0.5f,   1.0f,  0.0f,  0.0f,  1.0f, 1.0f,
+       0.5f, -0.5f, -0.5f,   1.0f,  0.0f,  0.0f,  0.0f, 1.0f,
+       0.5f, -0.5f, -0.5f,   1.0f,  0.0f,  0.0f,  0.0f, 1.0f,
+       0.5f, -0.5f,  0.5f,   1.0f,  0.0f,  0.0f,  0.0f, 0.0f,
+       0.5f,  0.5f,  0.5f,   1.0f,  0.0f,  0.0f,  1.0f, 0.0f,
 
-      -0.5f, -0.5f, -0.5f,   0.0f, 1.0f,
-       0.5f, -0.5f, -0.5f,   1.0f, 1.0f,
-       0.5f, -0.5f,  0.5f,   1.0f, 0.0f,
-       0.5f, -0.5f,  0.5f,   1.0f, 0.0f,
-      -0.5f, -0.5f,  0.5f,   0.0f, 0.0f,
-      -0.5f, -0.5f, -0.5f,   0.0f, 1.0f,
+      -0.5f, -0.5f, -0.5f,   0.0f, -1.0f,  0.0f,  0.0f, 1.0f,
+       0.5f, -0.5f, -0.5f,   0.0f, -1.0f,  0.0f,  1.0f, 1.0f,
+       0.5f, -0.5f,  0.5f,   0.0f, -1.0f,  0.0f,  1.0f, 0.0f,
+       0.5f, -0.5f,  0.5f,   0.0f, -1.0f,  0.0f,  1.0f, 0.0f,
+      -0.5f, -0.5f,  0.5f,   0.0f, -1.0f,  0.0f,  0.0f, 0.0f,
+      -0.5f, -0.5f, -0.5f,   0.0f, -1.0f,  0.0f,  0.0f, 1.0f,
 
-      -0.5f,  0.5f, -0.5f,   0.0f, 1.0f,
-       0.5f,  0.5f, -0.5f,   1.0f, 1.0f,
-       0.5f,  0.5f,  0.5f,   1.0f, 0.0f,
-       0.5f,  0.5f,  0.5f,   1.0f, 0.0f,
-      -0.5f,  0.5f,  0.5f,   0.0f, 0.0f,
-      -0.5f,  0.5f, -0.5f,   0.0f, 1.0f,
-  };
+      -0.5f,  0.5f, -0.5f,   0.0f,  1.0f,  0.0f,  0.0f, 1.0f,
+       0.5f,  0.5f, -0.5f,   0.0f,  1.0f,  0.0f,  1.0f, 1.0f,
+       0.5f,  0.5f,  0.5f,   0.0f,  1.0f,  0.0f,  1.0f, 0.0f,
+       0.5f,  0.5f,  0.5f,   0.0f,  1.0f,  0.0f,  1.0f, 0.0f,
+      -0.5f,  0.5f,  0.5f,   0.0f,  1.0f,  0.0f,  0.0f, 0.0f,
+      -0.5f,  0.5f, -0.5f,   0.0f,  1.0f,  0.0f,  0.0f, 1.0f,
+    };
 
   GLuint vao = 0;
   GLuint vbo = 0;
@@ -424,9 +428,11 @@ int main() {
   glBindBuffer(GL_ARRAY_BUFFER, vbo);
   glBufferData(GL_ARRAY_BUFFER, sizeof(cubeVertices), cubeVertices, GL_STATIC_DRAW);
   glEnableVertexAttribArray(0);
-  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), reinterpret_cast<void*>(0));
+  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), reinterpret_cast<void*>(0));
   glEnableVertexAttribArray(1);
-  glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), reinterpret_cast<void*>(3 * sizeof(float)));
+  glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), reinterpret_cast<void*>(3 * sizeof(float)));
+  glEnableVertexAttribArray(2);
+  glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), reinterpret_cast<void*>(6 * sizeof(float)));
   glBindVertexArray(0);
 
   const GLuint platformTexture = BuildPlankTexture();
@@ -629,6 +635,14 @@ int main() {
     shader.Use();
     shader.SetMat4("uView", view);
     shader.SetMat4("uProj", proj);
+    shader.SetVec3("uViewPos", cameraPos);
+    shader.SetVec3("uLightDir", glm::normalize(glm::vec3(-0.4f, -1.0f, -0.2f)));
+    shader.SetVec3("uLightColor", glm::vec3(1.0f, 0.98f, 0.95f));
+    shader.SetVec3("uAmbient", glm::vec3(0.2f, 0.2f, 0.22f));
+    shader.SetVec3("uRimColor", glm::vec3(0.2f, 0.35f, 0.6f));
+    glUniform1f(glGetUniformLocation(shader.id, "uRimPower"), 2.0f);
+    glUniform1f(glGetUniformLocation(shader.id, "uSpecPower"), 32.0f);
+    glUniform1f(glGetUniformLocation(shader.id, "uSpecIntensity"), 0.35f);
 
     glActiveTexture(GL_TEXTURE0);
     glBindVertexArray(vao);
@@ -639,6 +653,7 @@ int main() {
       model = glm::translate(model, position);
       model = glm::scale(model, scale);
       shader.SetMat4("uModel", model);
+      shader.SetMat3("uNormalMatrix", glm::transpose(glm::inverse(glm::mat3(model))));
       shader.SetVec3("uTint", tint);
       glDrawArrays(GL_TRIANGLES, 0, 36);
     };
@@ -670,6 +685,7 @@ int main() {
         model = glm::translate(model, localPos);
         model = glm::scale(model, scale);
         shader.SetMat4("uModel", model);
+        shader.SetMat3("uNormalMatrix", glm::transpose(glm::inverse(glm::mat3(model))));
         shader.SetVec3("uTint", tint);
         glDrawArrays(GL_TRIANGLES, 0, 36);
       };
