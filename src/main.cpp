@@ -454,6 +454,8 @@ int main() {
   float yaw = glm::radians(45.0f);
   float pitch = glm::radians(-20.0f);
   float cameraDistance = 6.0f;
+  float playerFacing = 0.0f;
+  float clownFacing = 0.0f;
 
   shader.Use();
   shader.SetInt("uTexture", 0);
@@ -651,7 +653,7 @@ int main() {
     auto DrawHumanoid = [&](const glm::vec3& basePos, float size, const glm::vec3& bodyTint,
                             const glm::vec3& skinTint, const glm::vec3& accentTint,
                             GLuint bodyTex, GLuint skinTex, GLuint accentTex,
-                            float walkPhase, float walkAmount) {
+                            float walkPhase, float walkAmount, float faceYaw) {
       const float torsoHeight = size * 1.2f;
       const float torsoWidth = size * 0.75f;
       const float legHeight = size * 0.9f;
@@ -663,51 +665,76 @@ int main() {
       const float legSwing = swing * size * 0.25f;
       const float armSwing = -swing * size * 0.3f;
 
-      DrawCube(basePos + glm::vec3(legWidth * 1.2f, legHeight * 0.5f, legSwing),
-           glm::vec3(legWidth, legHeight, legWidth * 0.9f),
-           accentTint, accentTex);
+      auto DrawPart = [&](const glm::vec3& localPos, const glm::vec3& scale, const glm::vec3& tint, GLuint tex) {
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glm::mat4 model(1.0f);
+        model = glm::translate(model, basePos);
+        model = glm::rotate(model, faceYaw, glm::vec3(0.0f, 1.0f, 0.0f));
+        model = glm::translate(model, localPos);
+        model = glm::scale(model, scale);
+        shader.SetMat4("uModel", model);
+        shader.SetVec3("uTint", tint);
+        glDrawArrays(GL_TRIANGLES, 0, 36);
+      };
 
-      DrawCube(basePos + glm::vec3(-legWidth * 1.2f, legHeight * 0.5f, -legSwing),
-           glm::vec3(legWidth, legHeight, legWidth * 0.9f),
-           accentTint, accentTex);
+      DrawPart(glm::vec3(legWidth * 1.2f, legHeight * 0.5f, legSwing),
+               glm::vec3(legWidth, legHeight, legWidth * 0.9f),
+               accentTint, accentTex);
 
-      DrawCube(basePos + glm::vec3(0.0f, legHeight + torsoHeight * 0.5f, 0.0f),
-           glm::vec3(torsoWidth, torsoHeight, torsoWidth * 0.75f),
-           bodyTint, bodyTex);
+      DrawPart(glm::vec3(-legWidth * 1.2f, legHeight * 0.5f, -legSwing),
+               glm::vec3(legWidth, legHeight, legWidth * 0.9f),
+               accentTint, accentTex);
 
-      DrawCube(basePos + glm::vec3(torsoWidth * 0.85f, legHeight + torsoHeight * 0.7f, armSwing),
-           glm::vec3(armWidth, armHeight, armWidth * 0.9f),
-           bodyTint, bodyTex);
-      DrawCube(basePos + glm::vec3(-torsoWidth * 0.85f, legHeight + torsoHeight * 0.7f, -armSwing),
-           glm::vec3(armWidth, armHeight, armWidth * 0.9f),
-           bodyTint, bodyTex);
+      DrawPart(glm::vec3(0.0f, legHeight + torsoHeight * 0.5f, 0.0f),
+               glm::vec3(torsoWidth, torsoHeight, torsoWidth * 0.75f),
+               bodyTint, bodyTex);
 
-      DrawCube(basePos + glm::vec3(0.0f, legHeight + torsoHeight + headSize * 0.55f, 0.0f),
-           glm::vec3(headSize, headSize, headSize),
-           skinTint, skinTex);
+      DrawPart(glm::vec3(torsoWidth * 0.85f, legHeight + torsoHeight * 0.7f, armSwing),
+               glm::vec3(armWidth, armHeight, armWidth * 0.9f),
+               bodyTint, bodyTex);
+      DrawPart(glm::vec3(-torsoWidth * 0.85f, legHeight + torsoHeight * 0.7f, -armSwing),
+               glm::vec3(armWidth, armHeight, armWidth * 0.9f),
+               bodyTint, bodyTex);
+
+      DrawPart(glm::vec3(0.0f, legHeight + torsoHeight + headSize * 0.55f, 0.0f),
+               glm::vec3(headSize, headSize, headSize),
+               skinTint, skinTex);
     };
 
     const float playerSize = player.halfSize * 2.0f;
     const float playerSpeed = glm::length(glm::vec2(player.velocity.x, player.velocity.z));
     const float playerWalk = glm::clamp(playerSpeed / moveSpeed, 0.0f, 1.0f);
+    if (playerSpeed > 0.05f) {
+      playerFacing = std::atan2(player.velocity.x, player.velocity.z);
+    }
     DrawHumanoid(player.position, playerSize,
            glm::vec3(0.35f, 0.55f, 0.9f),
            glm::vec3(0.95f, 0.85f, 0.75f),
            glm::vec3(0.2f, 0.2f, 0.25f),
            playerTexture, playerSkinTexture, playerTexture,
-           currentTime * (2.5f + playerWalk * 6.0f), playerWalk);
+                 currentTime * (2.5f + playerWalk * 6.0f), playerWalk, playerFacing);
 
     const float clownSize = clown.halfSize * 2.0f;
     const float clownSpeed = glm::length(glm::vec2(clown.velocity.x, clown.velocity.z));
     const float clownWalk = glm::clamp(clownSpeed / clown.speed, 0.0f, 1.0f);
+    if (clownSpeed > 0.05f) {
+      clownFacing = std::atan2(clown.velocity.x, clown.velocity.z);
+    }
     DrawHumanoid(clown.position, clownSize,
            glm::vec3(0.95f, 0.2f, 0.2f),
            glm::vec3(1.0f, 0.9f, 0.85f),
            glm::vec3(0.2f, 0.2f, 0.2f),
            clownTexture, clownSkinTexture, clownAccentTexture,
-           currentTime * (2.5f + clownWalk * 6.0f), clownWalk);
+                 currentTime * (2.5f + clownWalk * 6.0f), clownWalk, clownFacing);
 
-    DrawCube(clown.position + glm::vec3(clownSize * 0.9f, clownSize * 1.1f, 0.0f),
+    const float clownCos = std::cos(clownFacing);
+    const float clownSin = std::sin(clownFacing);
+    const glm::vec3 knifeOffsetLocal(clownSize * 0.9f, clownSize * 1.1f, 0.0f);
+    const glm::vec3 knifeOffset(
+      knifeOffsetLocal.x * clownCos + knifeOffsetLocal.z * clownSin,
+      knifeOffsetLocal.y,
+      -knifeOffsetLocal.x * clownSin + knifeOffsetLocal.z * clownCos);
+    DrawCube(clown.position + knifeOffset,
          glm::vec3(clownSize * 0.15f, clownSize * 0.35f, clownSize * 0.6f),
          glm::vec3(0.85f, 0.85f, 0.9f), knifeTexture);
 
