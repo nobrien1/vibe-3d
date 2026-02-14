@@ -234,6 +234,12 @@ struct Platform {
   glm::vec3 tint;
 };
 
+struct Cat {
+  glm::vec3 position;
+  glm::vec3 followPos;
+  bool collected = false;
+};
+
 static void FramebufferSizeCallback(GLFWwindow* window, int width, int height) {
   (void)window;
   glViewport(0, 0, width, height);
@@ -550,6 +556,8 @@ int main() {
   const GLuint clownSkinTexture = BuildSkinTexture();
   const GLuint clownAccentTexture = BuildDotsTexture(220, 60);
   const GLuint knifeTexture = BuildMetalTexture();
+  const GLuint catTexture = BuildDotsTexture(230, 120);
+  const GLuint carTexture = BuildMetalTexture();
 
   AudioState audio;
   if (ma_engine_init(nullptr, &audio.engine) == MA_SUCCESS) {
@@ -584,10 +592,40 @@ int main() {
   float stamina = 1.0f;
 
   std::vector<Platform> platforms = {
-      {{0.0f, -1.0f, 0.0f}, {10.0f, 0.5f, 10.0f}, {0.6f, 0.7f, 0.8f}},
-      {{3.0f, 1.0f, 0.0f}, {1.5f, 0.3f, 1.5f}, {0.9f, 0.7f, 0.4f}},
-      {{-2.5f, 2.2f, -1.5f}, {1.0f, 0.3f, 1.0f}, {0.5f, 0.9f, 0.6f}},
+      {{0.0f, -1.0f, 0.0f}, {22.0f, 0.5f, 22.0f}, {0.6f, 0.7f, 0.8f}},
+      {{4.0f, 1.0f, 0.0f}, {1.8f, 0.3f, 1.8f}, {0.9f, 0.7f, 0.4f}},
+      {{-3.0f, 2.2f, -2.5f}, {1.2f, 0.3f, 1.2f}, {0.5f, 0.9f, 0.6f}},
+      {{7.0f, 3.2f, 2.5f}, {1.2f, 0.3f, 1.2f}, {0.6f, 0.8f, 0.9f}},
+      {{-8.0f, 1.4f, 4.0f}, {2.0f, 0.3f, 1.0f}, {0.8f, 0.6f, 0.7f}},
+      {{-11.0f, 3.0f, 6.0f}, {1.4f, 0.3f, 1.4f}, {0.7f, 0.8f, 0.5f}},
+      {{10.0f, 1.8f, -6.0f}, {1.6f, 0.3f, 1.2f}, {0.6f, 0.9f, 0.7f}},
+      {{14.0f, 3.0f, -8.0f}, {1.2f, 0.3f, 1.2f}, {0.9f, 0.8f, 0.5f}},
+      {{-12.0f, 1.0f, -4.0f}, {1.2f, 0.3f, 1.2f}, {0.7f, 0.8f, 0.7f}},
+      {{-14.0f, 1.6f, -6.0f}, {1.2f, 0.3f, 1.2f}, {0.7f, 0.6f, 0.9f}},
+      {{-18.0f, 2.4f, -9.0f}, {1.1f, 0.3f, 1.1f}, {0.9f, 0.6f, 0.6f}},
+      {{5.0f, 3.6f, 8.0f}, {1.2f, 0.3f, 1.2f}, {0.6f, 0.8f, 0.6f}},
+      {{-2.0f, 4.2f, 8.5f}, {1.0f, 0.3f, 1.0f}, {0.8f, 0.7f, 0.6f}},
+      {{-6.0f, 4.6f, 9.0f}, {1.0f, 0.3f, 1.0f}, {0.7f, 0.7f, 0.9f}},
   };
+
+  std::vector<Cat> cats = {
+      {{2.5f, 0.0f, -2.0f}, {}, false},
+      {{-4.0f, 0.0f, 3.0f}, {}, false},
+      {{6.0f, 2.0f, 1.5f}, {}, false},
+      {{-9.0f, 2.4f, 4.0f}, {}, false},
+      {{-12.0f, 3.8f, 6.0f}, {}, false},
+      {{10.0f, 2.2f, -5.5f}, {}, false},
+      {{14.0f, 3.4f, -8.0f}, {}, false},
+      {{-14.0f, 2.2f, -6.0f}, {}, false},
+      {{-18.0f, 2.8f, -9.0f}, {}, false},
+      {{-6.0f, 5.0f, 9.0f}, {}, false},
+  };
+  for (Cat& cat : cats) {
+    cat.followPos = cat.position;
+  }
+  const glm::vec3 carPosition(18.0f, 0.0f, 16.0f);
+  bool hasWon = false;
+  bool winAnnounced = false;
 
   float lastTime = static_cast<float>(glfwGetTime());
   float yaw = glm::radians(45.0f);
@@ -665,6 +703,9 @@ int main() {
     }
     if (glm::length(inputDir) > 0.001f) {
       inputDir = glm::normalize(inputDir);
+    }
+    if (hasWon) {
+      inputDir = glm::vec3(0.0f);
     }
 
     const bool wantsSprint = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS && stamina > 0.05f;
@@ -772,7 +813,7 @@ int main() {
     const float playerHeightGap = player.position.y - clown.position.y;
     const float playerHorizDist = glm::length(glm::vec2(player.position.x - clown.position.x,
                                                        player.position.z - clown.position.z));
-    if (clown.onGround && clown.jumpCooldown <= 0.0f && playerHeightGap > 0.2f && playerHorizDist < 6.5f) {
+    if (!hasWon && clown.onGround && clown.jumpCooldown <= 0.0f && playerHeightGap > 0.2f && playerHorizDist < 6.5f) {
       const float jumpHeight = glm::clamp(playerHeightGap + 0.4f, 0.8f, 2.4f);
       const float jumpVelocity = std::sqrt(2.0f * -gravity * jumpHeight);
       clown.velocity.y = jumpVelocity;
@@ -802,6 +843,11 @@ int main() {
         PlaySound(audio.chase);
         chaseTimer = 2.5f;
       }
+    }
+
+    if (hasWon) {
+      clown.velocity.x = 0.0f;
+      clown.velocity.z = 0.0f;
     }
 
     clown.position += clown.velocity * deltaTime;
@@ -836,6 +882,46 @@ int main() {
       clown.position = glm::vec3(4.0f, enemyGround, -4.0f);
       clown.velocity = glm::vec3(0.0f);
       clown.onGround = true;
+    }
+
+    int collectedCount = 0;
+    for (Cat& cat : cats) {
+      if (!cat.collected && glm::distance(player.position, cat.position) < 1.2f) {
+        cat.collected = true;
+        cat.followPos = player.position;
+      }
+      if (cat.collected) {
+        collectedCount++;
+      }
+    }
+
+    glm::vec3 followDir(std::sin(playerFacing), 0.0f, std::cos(playerFacing));
+    if (glm::length(followDir) < 0.001f) {
+      followDir = glm::vec3(0.0f, 0.0f, 1.0f);
+    }
+    followDir = glm::normalize(followDir);
+    glm::vec3 leaderPos = player.position;
+    int followIndex = 0;
+    for (Cat& cat : cats) {
+      if (!cat.collected) {
+        continue;
+      }
+      const float spacing = 0.9f + 0.15f * static_cast<float>(followIndex);
+      const glm::vec3 target = leaderPos - followDir * spacing +
+                               glm::vec3(0.0f, 0.25f + 0.05f * std::sin(currentTime * 3.0f + followIndex), 0.0f);
+      const float followAlpha = 1.0f - std::exp(-6.0f * deltaTime);
+      cat.followPos = glm::mix(cat.followPos, target, followAlpha);
+      leaderPos = cat.followPos;
+      followIndex++;
+    }
+
+    if (!hasWon && collectedCount >= 10 && glm::distance(player.position, carPosition) < 2.2f) {
+      hasWon = true;
+      if (!winAnnounced) {
+        winAnnounced = true;
+        glfwSetWindowTitle(window, "Vibe 3D - You Win!");
+        std::cout << "You collected all cats and escaped!\n";
+      }
     }
 
     const glm::vec3 cameraOffset = cameraForward * -cameraDistance + glm::vec3(0.0f, 2.0f, 0.0f);
@@ -890,6 +976,16 @@ int main() {
     for (const Platform& platform : platforms) {
       DrawCube(platform.position, platform.halfExtents * 2.0f, platform.tint, platformTexture);
     }
+
+    for (const Cat& cat : cats) {
+      const glm::vec3 catPos = cat.collected ? cat.followPos : cat.position;
+      const glm::vec3 bodyScale(0.35f, 0.25f, 0.45f);
+      DrawCube(catPos + glm::vec3(0.0f, 0.25f, 0.0f), bodyScale, glm::vec3(1.0f, 0.8f, 0.9f), catTexture);
+      DrawCube(catPos + glm::vec3(0.0f, 0.48f, 0.25f), glm::vec3(0.18f), glm::vec3(1.0f, 0.9f, 0.95f), catTexture);
+    }
+
+    DrawCube(carPosition + glm::vec3(0.0f, 0.5f, 0.0f), glm::vec3(1.2f, 0.5f, 2.0f), glm::vec3(0.4f, 0.6f, 0.9f), carTexture);
+    DrawCube(carPosition + glm::vec3(0.0f, 1.0f, -0.2f), glm::vec3(0.8f, 0.35f, 1.0f), glm::vec3(0.7f, 0.8f, 0.9f), carTexture);
 
     auto DrawHumanoid = [&](const glm::vec3& basePos, float size, const glm::vec3& bodyTint,
                             const glm::vec3& skinTint, const glm::vec3& accentTint,
