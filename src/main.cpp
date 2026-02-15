@@ -244,6 +244,12 @@ struct Cat {
   Behavior behavior = Behavior::Idle;
   float behaviorTimer = 0.0f;
   glm::vec3 wanderTarget = glm::vec3(0.0f);
+  enum class IdleAnim { None, Groom, Loaf, Roll, Groomed };
+  IdleAnim idleAnim = IdleAnim::None;
+  float idleAnimTimer = 0.0f;
+  float idleAnimPhase = 0.0f;
+  int groomTarget = -1;
+  float rollHold = 0.0f;
   
   // Personality
   float moveSpeed = 3.0f;
@@ -327,6 +333,42 @@ static GLuint BuildDotsTexture(unsigned char base, unsigned char dot) {
         pixels[idx + 1] = dot;
         pixels[idx + 2] = dot;
       }
+    }
+  }
+
+  GLuint tex = 0;
+  glGenTextures(1, &tex);
+  glBindTexture(GL_TEXTURE_2D, tex);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, size, size, 0, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
+  glGenerateMipmap(GL_TEXTURE_2D);
+  glBindTexture(GL_TEXTURE_2D, 0);
+  return tex;
+}
+
+static GLuint BuildCatTexture() {
+  const int size = 128;
+  std::vector<unsigned char> pixels(size * size * 3);
+  for (int y = 0; y < size; ++y) {
+    for (int x = 0; x < size; ++x) {
+      const float fx = static_cast<float>(x) / static_cast<float>(size - 1);
+      const float fy = static_cast<float>(y) / static_cast<float>(size - 1);
+      const float stripe = 0.04f * std::sin(fx * 10.0f + fy * 6.0f) +
+                           0.03f * std::sin(fx * 22.0f - fy * 4.0f);
+      const int cellX = (x + 8) % 32;
+      const int cellY = (y + 12) % 32;
+      const int dx = cellX - 16;
+      const int dy = cellY - 16;
+      const float spot = (dx * dx + dy * dy <= 40) ? -0.12f : 0.0f;
+      float base = 0.86f + stripe + spot + 0.04f * (0.5f - fy);
+      base = glm::clamp(base, 0.65f, 1.0f);
+      const int idx = (y * size + x) * 3;
+      pixels[idx + 0] = static_cast<unsigned char>(base * 240.0f + 10.0f);
+      pixels[idx + 1] = static_cast<unsigned char>(base * 220.0f + 8.0f);
+      pixels[idx + 2] = static_cast<unsigned char>(base * 210.0f + 6.0f);
     }
   }
 
@@ -569,7 +611,7 @@ int main() {
   const GLuint clownSkinTexture = BuildSkinTexture();
   const GLuint clownAccentTexture = BuildDotsTexture(220, 60);
   const GLuint knifeTexture = BuildMetalTexture();
-  const GLuint catTexture = BuildDotsTexture(230, 120);
+  const GLuint catTexture = BuildCatTexture();
   const GLuint carTexture = BuildMetalTexture();
 
   AudioState audio;
@@ -644,6 +686,7 @@ int main() {
     cat.facing = RandomFloat(cat.seed) * 6.28318f;
     cat.behaviorTimer = RandomFloat(cat.seed) * 3.0f;
     cat.behavior = Cat::Behavior::Idle;
+    cat.idleAnimTimer = 0.5f + RandomFloat(cat.seed) * 2.0f;
   }
   const glm::vec3 carPosition(18.0f, 0.0f, 16.0f);
   bool hasWon = false;
@@ -919,8 +962,19 @@ int main() {
     }
 
     // Update cat AI and physics
-    for (Cat& cat : cats) {
+    for (size_t catIdx = 0; catIdx < cats.size(); ++catIdx) {
+      Cat& cat = cats[catIdx];
       cat.behaviorTimer -= deltaTime;
+      cat.idleAnimTimer -= deltaTime;
+      if (cat.idleAnim != Cat::IdleAnim::None) {
+        cat.idleAnimPhase += deltaTime;
+        if (cat.idleAnimTimer <= 0.0f) {
+          cat.idleAnim = Cat::IdleAnim::None;
+          cat.idleAnimPhase = 0.0f;
+          cat.groomTarget = -1;
+          cat.rollHold = 0.0f;
+        }
+      }
       
       // Apply gravity
       const float catGravity = -18.0f;
@@ -950,23 +1004,28 @@ int main() {
       }
       
       glm::vec3 desiredVelocity(0.0f);
+      float distToTarget = 999.0f;
+      const float playerDist2D = glm::length(glm::vec2(player.position.x - cat.position.x,
+                                                       player.position.z - cat.position.z));
       
       if (cat.collected) {
         // Following AI - move toward area around player
-        if (cat.behaviorTimer <= 0.0f) {
+        if (cat.behaviorTimer <= 0.0f || playerDist2D > 5.5f) {
           // Pick new target near player
           const float angle = RandomFloat(cat.seed) * 6.28318f;
-          const float radius = 2.0f + RandomFloat(cat.seed) * 2.0f;
+          const float radius = (playerDist2D > 5.5f) ? 0.6f : (1.6f + RandomFloat(cat.seed) * 1.8f);
           cat.wanderTarget = player.position + glm::vec3(std::cos(angle) * radius, 0.0f, std::sin(angle) * radius);
-          cat.behaviorTimer = 2.0f + RandomFloat(cat.seed) * 2.0f;
+          cat.behaviorTimer = (playerDist2D > 5.5f) ? 0.5f : (1.4f + RandomFloat(cat.seed) * 1.6f);
         }
         
         const glm::vec3 toTarget = cat.wanderTarget - cat.position;
-        const float distToTarget = glm::length(glm::vec2(toTarget.x, toTarget.z));
+        distToTarget = glm::length(glm::vec2(toTarget.x, toTarget.z));
         
-        if (distToTarget > 0.5f) {
+        if (distToTarget > 0.35f) {
           const glm::vec3 dir = glm::normalize(glm::vec3(toTarget.x, 0.0f, toTarget.z));
-          desiredVelocity = dir * cat.moveSpeed;
+          const float catchup = glm::clamp((playerDist2D - 2.5f) / 6.0f, 0.0f, 1.0f);
+          const float targetSpeed = cat.moveSpeed * (1.0f + catchup * 1.2f);
+          desiredVelocity = dir * targetSpeed;
           
           // Update facing
           const float targetFacing = std::atan2(dir.x, dir.z);
@@ -995,7 +1054,7 @@ int main() {
         
         if (cat.behavior == Cat::Behavior::Wandering) {
           const glm::vec3 toTarget = cat.wanderTarget - cat.position;
-          const float distToTarget = glm::length(glm::vec2(toTarget.x, toTarget.z));
+          distToTarget = glm::length(glm::vec2(toTarget.x, toTarget.z));
           
           if (distToTarget > 0.5f) {
             const glm::vec3 dir = glm::normalize(glm::vec3(toTarget.x, 0.0f, toTarget.z));
@@ -1012,9 +1071,82 @@ int main() {
           }
         }
       }
+
+      const float speed2D = glm::length(glm::vec2(cat.velocity.x, cat.velocity.z));
+      const bool canIdle = speed2D < 0.15f && cat.velocity.y == 0.0f &&
+                           ((cat.collected && playerDist2D < 2.8f && distToTarget < 0.6f) ||
+                            (!cat.collected && cat.behavior == Cat::Behavior::Idle));
+      if (glm::length(glm::vec2(desiredVelocity.x, desiredVelocity.z)) > 0.2f) {
+        cat.idleAnim = Cat::IdleAnim::None;
+        cat.idleAnimTimer = 0.2f;
+        cat.idleAnimPhase = 0.0f;
+        cat.groomTarget = -1;
+        cat.rollHold = 0.0f;
+      } else if (canIdle && cat.idleAnim == Cat::IdleAnim::None && cat.idleAnimTimer <= 0.0f) {
+        const float roll = RandomFloat(cat.seed);
+        if (roll < 0.28f) {
+          cat.idleAnim = Cat::IdleAnim::Groom;
+          cat.idleAnimTimer = 12.0f + RandomFloat(cat.seed) * 18.0f;
+          cat.groomTarget = -1;
+          float nearestDist = 999.0f;
+          for (size_t otherIdx = 0; otherIdx < cats.size(); ++otherIdx) {
+            if (otherIdx == catIdx) {
+              continue;
+            }
+            const Cat& other = cats[otherIdx];
+            const float otherSpeed = glm::length(glm::vec2(other.velocity.x, other.velocity.z));
+            const float dist = glm::length(glm::vec2(other.position.x - cat.position.x,
+                                                      other.position.z - cat.position.z));
+            if (otherSpeed < 0.2f && dist < 1.4f && dist < nearestDist) {
+              nearestDist = dist;
+              cat.groomTarget = static_cast<int>(otherIdx);
+            }
+          }
+        } else if (roll < 0.72f) {
+          cat.idleAnim = Cat::IdleAnim::Loaf;
+          cat.idleAnimTimer = 20.0f + RandomFloat(cat.seed) * 220.0f;
+        } else if (roll < 0.86f) {
+          cat.idleAnim = Cat::IdleAnim::Roll;
+          cat.rollHold = 4.0f + RandomFloat(cat.seed) * 4.0f;
+          cat.idleAnimTimer = 2.0f + cat.rollHold + 2.0f;
+        } else {
+          cat.idleAnimTimer = 1.0f + RandomFloat(cat.seed) * 1.5f;
+        }
+        cat.idleAnimPhase = 0.0f;
+      }
+
+      if (cat.idleAnim == Cat::IdleAnim::Groom && cat.groomTarget >= 0) {
+        const Cat& other = cats[static_cast<size_t>(cat.groomTarget)];
+        const glm::vec3 toOther = other.position - cat.position;
+        const float dist = glm::length(glm::vec2(toOther.x, toOther.z));
+        if (dist < 1.8f) {
+          const glm::vec3 dir = glm::normalize(glm::vec3(toOther.x, 0.0f, toOther.z));
+          const float targetFacing = std::atan2(dir.x, dir.z);
+          float facingDiff = targetFacing - cat.facing;
+          while (facingDiff > 3.14159f) facingDiff -= 6.28318f;
+          while (facingDiff < -3.14159f) facingDiff += 6.28318f;
+          cat.facing += facingDiff * cat.turnSpeed * deltaTime;
+          Cat& otherCat = cats[static_cast<size_t>(cat.groomTarget)];
+          const float otherSpeed = glm::length(glm::vec2(otherCat.velocity.x, otherCat.velocity.z));
+          if (otherSpeed < 0.2f && otherCat.velocity.y == 0.0f) {
+            if (otherCat.idleAnim != Cat::IdleAnim::Groomed) {
+              otherCat.idleAnimPhase = 0.0f;
+            }
+            otherCat.idleAnim = Cat::IdleAnim::Groomed;
+            otherCat.idleAnimTimer = 1.2f;
+            const float otherFacing = std::atan2(-dir.x, -dir.z);
+            float otherDiff = otherFacing - otherCat.facing;
+            while (otherDiff > 3.14159f) otherDiff -= 6.28318f;
+            while (otherDiff < -3.14159f) otherDiff += 6.28318f;
+            otherCat.facing += otherDiff * otherCat.turnSpeed * deltaTime;
+          }
+        } else {
+          cat.groomTarget = -1;
+        }
+      }
       
       // Apply horizontal movement with smooth acceleration
-      const float accel = 12.0f * deltaTime;
+      const float accel = (cat.collected ? 18.0f : 12.0f) * deltaTime;
       cat.velocity.x = glm::mix(cat.velocity.x, desiredVelocity.x, accel);
       cat.velocity.z = glm::mix(cat.velocity.z, desiredVelocity.z, accel);
       
@@ -1092,15 +1224,58 @@ int main() {
     for (const Cat& cat : cats) {
       const float speed = glm::length(glm::vec2(cat.velocity.x, cat.velocity.z));
       const float walkAmount = glm::clamp(speed / 3.0f, 0.0f, 1.0f);
-      const float catBob = std::sin(cat.walkCycle * 2.0f) * walkAmount * 0.05f;
-      const float catWag = std::sin(cat.walkCycle * 1.6f) * 0.25f;
+      float groom = 0.0f;
+      float loaf = 0.0f;
+      float roll = 0.0f;
+      float groomed = 0.0f;
+      const float catSeedOffset = static_cast<float>(catIndex) * 1.7f;
+      if (cat.idleAnim == Cat::IdleAnim::Groom) {
+        groom = 0.5f + 0.5f * std::sin(cat.idleAnimPhase * 1.6f);
+      } else if (cat.idleAnim == Cat::IdleAnim::Loaf) {
+        loaf = 1.0f;
+      } else if (cat.idleAnim == Cat::IdleAnim::Roll) {
+        const float rollIn = 1.0f;
+        const float rollOut = 1.0f;
+        const float hold = cat.rollHold;
+        const float t = cat.idleAnimPhase;
+        if (t < rollIn) {
+          roll = glm::mix(0.0f, 1.6f, t / rollIn);
+        } else if (t < rollIn + hold) {
+          roll = 1.6f;
+        } else if (t < rollIn + hold + rollOut) {
+          roll = glm::mix(1.6f, 0.0f, (t - rollIn - hold) / rollOut);
+        }
+      } else if (cat.idleAnim == Cat::IdleAnim::Groomed) {
+        groomed = 0.5f + 0.5f * std::sin(cat.idleAnimPhase * 1.4f);
+      }
+
+      float catBob = std::sin(cat.walkCycle * 2.0f) * walkAmount * 0.05f;
+      catBob *= (1.0f - loaf * 0.9f) * (1.0f - groom * 0.4f) * (1.0f - groomed * 0.4f);
+      float catWag = std::sin(cat.walkCycle * 1.6f) * 0.25f;
+      catWag *= (1.0f - loaf * 0.7f) * (1.0f - groomed * 0.3f);
       const float legSwing = std::sin(cat.walkCycle) * walkAmount * 0.18f;
+      const float earWiggle = (1.0f - walkAmount) * 0.18f * std::sin(currentTime * 2.3f + catSeedOffset) +
+              groom * 0.22f * std::sin(cat.idleAnimPhase * 3.2f);
+      const float headTilt = (1.0f - walkAmount) * 0.12f * std::sin(currentTime * 1.4f + catSeedOffset) +
+                 groomed * 0.18f * std::sin(cat.idleAnimPhase * 2.0f);
+      const float blinkPhase = std::sin(currentTime * 1.8f + catSeedOffset);
+      const float blink = glm::clamp((blinkPhase - 0.92f) / 0.08f, 0.0f, 1.0f);
       
-      glm::vec3 catPos = cat.position + glm::vec3(0.0f, catBob, 0.0f);
-      const glm::vec3 bodyScale(0.38f, 0.24f, 0.5f);
-      const glm::vec3 headScale(0.22f, 0.22f, 0.22f);
-      const glm::vec3 earScale(0.08f, 0.12f, 0.06f);
-      const glm::vec3 legScale(0.06f, 0.18f, 0.06f);
+      glm::vec3 catPos = cat.position + glm::vec3(0.0f, catBob - loaf * 0.08f - groomed * 0.03f, 0.0f);
+      glm::vec3 bodyScale(0.36f, 0.22f, 0.48f);
+      glm::vec3 headScale(0.26f, 0.26f, 0.26f);
+      const glm::vec3 earScale(0.085f, 0.13f, 0.065f);
+      glm::vec3 legScale(0.055f, 0.16f, 0.055f);
+      if (loaf > 0.0f) {
+        bodyScale.y *= 0.7f;
+        headScale.y *= 0.85f;
+        legScale.y *= 0.4f;
+      }
+
+      const float groomLift = groom * 0.12f;
+      const float groomBob = groom * 0.05f * std::sin(cat.idleAnimPhase * 2.4f);
+      const float groomedBob = groomed * 0.035f * std::sin(cat.idleAnimPhase * 2.2f);
+      const float eyeScaleY = 0.05f * (1.0f - blink) + 0.012f * blink;
       
       // Helper to draw oriented parts
       auto DrawCatPart = [&](const glm::vec3& localPos, const glm::vec3& scale, const glm::vec3& tint) {
@@ -1108,6 +1283,7 @@ int main() {
         glm::mat4 model(1.0f);
         model = glm::translate(model, catPos);
         model = glm::rotate(model, cat.facing, glm::vec3(0.0f, 1.0f, 0.0f));
+        model = glm::rotate(model, roll, glm::vec3(0.0f, 0.0f, 1.0f));
         model = glm::translate(model, localPos);
         model = glm::scale(model, scale);
         shader.SetMat4("uModel", model);
@@ -1116,20 +1292,73 @@ int main() {
         glDrawArrays(GL_TRIANGLES, 0, 36);
       };
 
-      DrawCatPart(glm::vec3(0.0f, 0.28f, 0.0f), bodyScale, glm::vec3(1.0f, 0.85f, 0.95f));
-      DrawCatPart(glm::vec3(0.0f, 0.5f, 0.32f), headScale, glm::vec3(1.0f, 0.92f, 0.98f));
-      DrawCatPart(glm::vec3(0.09f, 0.62f, 0.38f), earScale, glm::vec3(0.95f, 0.75f, 0.85f));
-      DrawCatPart(glm::vec3(-0.09f, 0.62f, 0.38f), earScale, glm::vec3(0.95f, 0.75f, 0.85f));
+      auto DrawCatPartRot = [&](const glm::vec3& localPos, const glm::vec3& localRot,
+                                const glm::vec3& scale, const glm::vec3& tint) {
+        glBindTexture(GL_TEXTURE_2D, catTexture);
+        glm::mat4 model(1.0f);
+        model = glm::translate(model, catPos);
+        model = glm::rotate(model, cat.facing, glm::vec3(0.0f, 1.0f, 0.0f));
+        model = glm::rotate(model, roll, glm::vec3(0.0f, 0.0f, 1.0f));
+        model = glm::translate(model, localPos);
+        model = glm::rotate(model, localRot.x, glm::vec3(1.0f, 0.0f, 0.0f));
+        model = glm::rotate(model, localRot.y, glm::vec3(0.0f, 1.0f, 0.0f));
+        model = glm::rotate(model, localRot.z, glm::vec3(0.0f, 0.0f, 1.0f));
+        model = glm::scale(model, scale);
+        shader.SetMat4("uModel", model);
+        shader.SetMat3("uNormalMatrix", glm::transpose(glm::inverse(glm::mat3(model))));
+        shader.SetVec3("uTint", tint);
+        glDrawArrays(GL_TRIANGLES, 0, 36);
+      };
 
-      DrawCatPart(glm::vec3(0.12f, 0.12f, 0.18f + legSwing), legScale, glm::vec3(0.95f, 0.8f, 0.9f));
+      DrawCatPart(glm::vec3(0.0f, 0.28f, 0.0f), bodyScale, glm::vec3(1.0f, 0.85f, 0.95f));
+      DrawCatPartRot(glm::vec3(0.0f, 0.52f + groomBob + groomedBob - loaf * 0.03f, 0.32f + groom * 0.06f),
+                     glm::vec3(0.0f, 0.0f, headTilt), headScale, glm::vec3(1.0f, 0.92f, 0.98f));
+      DrawCatPartRot(glm::vec3(0.09f, 0.62f, 0.38f), glm::vec3(0.0f, 0.0f, earWiggle), earScale, glm::vec3(0.95f, 0.75f, 0.85f));
+      DrawCatPartRot(glm::vec3(-0.09f, 0.62f, 0.38f), glm::vec3(0.0f, 0.0f, -earWiggle), earScale, glm::vec3(0.95f, 0.75f, 0.85f));
+
+      DrawCatPartRot(glm::vec3(0.0f, 0.48f + groomedBob * 0.5f, 0.42f), glm::vec3(0.0f, 0.0f, headTilt * 0.6f),
+                     glm::vec3(0.12f, 0.08f, 0.08f), glm::vec3(1.0f, 0.95f, 0.98f));
+      DrawCatPartRot(glm::vec3(0.0f, 0.47f, 0.47f), glm::vec3(0.0f, 0.0f, headTilt),
+                     glm::vec3(0.04f, 0.03f, 0.04f), glm::vec3(0.9f, 0.55f, 0.6f));
+
+      DrawCatPartRot(glm::vec3(0.075f, 0.51f, 0.48f), glm::vec3(0.0f, 0.0f, headTilt),
+             glm::vec3(0.042f, eyeScaleY, 0.045f), glm::vec3(0.12f, 0.1f, 0.12f));
+      DrawCatPartRot(glm::vec3(-0.075f, 0.51f, 0.48f), glm::vec3(0.0f, 0.0f, headTilt),
+             glm::vec3(0.042f, eyeScaleY, 0.045f), glm::vec3(0.12f, 0.1f, 0.12f));
+      DrawCatPartRot(glm::vec3(0.09f, 0.53f, 0.5f), glm::vec3(0.0f, 0.0f, headTilt),
+             glm::vec3(0.012f, 0.012f, 0.012f), glm::vec3(0.98f, 0.98f, 1.0f));
+      DrawCatPartRot(glm::vec3(-0.09f, 0.53f, 0.5f), glm::vec3(0.0f, 0.0f, headTilt),
+             glm::vec3(0.012f, 0.012f, 0.012f), glm::vec3(0.98f, 0.98f, 1.0f));
+
+      DrawCatPartRot(glm::vec3(0.13f, 0.48f, 0.45f), glm::vec3(0.0f, 0.0f, headTilt),
+             glm::vec3(0.03f, 0.022f, 0.022f), glm::vec3(0.98f, 0.75f, 0.82f));
+      DrawCatPartRot(glm::vec3(-0.13f, 0.48f, 0.45f), glm::vec3(0.0f, 0.0f, headTilt),
+             glm::vec3(0.03f, 0.022f, 0.022f), glm::vec3(0.98f, 0.75f, 0.82f));
+
+      if (cat.collected) {
+        DrawCatPart(glm::vec3(0.0f, 0.43f, 0.26f), glm::vec3(0.24f, 0.03f, 0.26f), glm::vec3(0.2f, 0.55f, 0.95f));
+        DrawCatPart(glm::vec3(0.0f, 0.39f, 0.49f), glm::vec3(0.05f, 0.05f, 0.02f), glm::vec3(0.3f, 0.7f, 1.0f));
+      }
+
+      DrawCatPart(glm::vec3(0.12f, 0.12f + groomLift, 0.18f + legSwing + groom * 0.06f), legScale, glm::vec3(0.95f, 0.8f, 0.9f));
       DrawCatPart(glm::vec3(-0.12f, 0.12f, 0.18f - legSwing), legScale, glm::vec3(0.95f, 0.8f, 0.9f));
       DrawCatPart(glm::vec3(0.12f, 0.12f, -0.18f - legSwing), legScale, glm::vec3(0.95f, 0.8f, 0.9f));
       DrawCatPart(glm::vec3(-0.12f, 0.12f, -0.18f + legSwing), legScale, glm::vec3(0.95f, 0.8f, 0.9f));
+
+      DrawCatPart(glm::vec3(0.12f, 0.03f + groomLift * 0.4f, 0.18f + legSwing + groom * 0.06f),
+          glm::vec3(0.045f, 0.02f, 0.045f), glm::vec3(0.98f, 0.72f, 0.82f));
+      DrawCatPart(glm::vec3(-0.12f, 0.03f, 0.18f - legSwing),
+          glm::vec3(0.045f, 0.02f, 0.045f), glm::vec3(0.98f, 0.72f, 0.82f));
+      DrawCatPart(glm::vec3(0.12f, 0.03f, -0.18f - legSwing),
+          glm::vec3(0.045f, 0.02f, 0.045f), glm::vec3(0.98f, 0.72f, 0.82f));
+      DrawCatPart(glm::vec3(-0.12f, 0.03f, -0.18f + legSwing),
+          glm::vec3(0.045f, 0.02f, 0.045f), glm::vec3(0.98f, 0.72f, 0.82f));
 
       // Tail with wag
       glm::mat4 tailModel(1.0f);
       tailModel = glm::translate(tailModel, catPos);
       tailModel = glm::rotate(tailModel, cat.facing, glm::vec3(0.0f, 1.0f, 0.0f));
+      tailModel = glm::rotate(tailModel, roll, glm::vec3(0.0f, 0.0f, 1.0f));
       tailModel = glm::translate(tailModel, glm::vec3(0.0f, 0.34f, -0.32f));
       tailModel = glm::rotate(tailModel, catWag, glm::vec3(0.0f, 1.0f, 0.0f));
       tailModel = glm::scale(tailModel, glm::vec3(0.08f, 0.08f, 0.35f));
@@ -1137,6 +1366,14 @@ int main() {
       shader.SetMat3("uNormalMatrix", glm::transpose(glm::inverse(glm::mat3(tailModel))));
       shader.SetVec3("uTint", glm::vec3(1.0f, 0.8f, 0.9f));
       glBindTexture(GL_TEXTURE_2D, catTexture);
+      glDrawArrays(GL_TRIANGLES, 0, 36);
+
+      glm::mat4 tailTip = tailModel;
+      tailTip = glm::translate(tailTip, glm::vec3(0.0f, 0.0f, 0.9f));
+      tailTip = glm::scale(tailTip, glm::vec3(1.6f, 1.6f, 1.6f));
+      shader.SetMat4("uModel", tailTip);
+      shader.SetMat3("uNormalMatrix", glm::transpose(glm::inverse(glm::mat3(tailTip))));
+      shader.SetVec3("uTint", glm::vec3(1.0f, 0.9f, 0.95f));
       glDrawArrays(GL_TRIANGLES, 0, 36);
 
       catIndex++;
