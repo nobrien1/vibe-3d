@@ -1,11 +1,16 @@
 #include <glad/gl.h>
 #include <GLFW/glfw3.h>
 
+#include <imgui.h>
+#include <backends/imgui_impl_glfw.h>
+#include <backends/imgui_impl_opengl3.h>
+
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
 #include <cmath>
+#include <cstdio>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -535,6 +540,21 @@ int main() {
     return 1;
   }
 
+  IMGUI_CHECKVERSION();
+  ImGui::CreateContext();
+  ImGui::StyleColorsDark();
+  float uiScale = 1.15f;
+  ImGuiStyle baseImGuiStyle = ImGui::GetStyle();
+  auto ApplyUiScale = [&](float scale) {
+    ImGuiStyle& style = ImGui::GetStyle();
+    style = baseImGuiStyle;
+    style.ScaleAllSizes(scale);
+    ImGui::GetIO().FontGlobalScale = scale;
+  };
+  ApplyUiScale(uiScale);
+  ImGui_ImplGlfw_InitForOpenGL(window, true);
+  ImGui_ImplOpenGL3_Init("#version 330");
+
   glEnable(GL_DEPTH_TEST);
 
   Shader shader;
@@ -707,6 +727,16 @@ int main() {
   bool wasClownOnGround = false;
   float footstepTimer = 0.0f;
   float chaseTimer = 0.0f;
+  bool isPaused = false;
+  bool wasEscapeDown = false;
+  bool wasPDown = false;
+  bool invertLookY = false;
+  bool showDebugHud = false;
+  float lastAppliedUiScale = uiScale;
+  float mouseSensitivity = 0.005f;
+  float musicVolume = 0.3f;
+  float sfxVolume = 1.0f;
+  int collectedCount = 0;
 
   shader.Use();
   shader.SetInt("uTexture", 0);
@@ -717,8 +747,27 @@ int main() {
     lastTime = currentTime;
 
     glfwPollEvents();
-    if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
-      glfwSetWindowShouldClose(window, GLFW_TRUE);
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+
+    const bool escapeDown = glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
+    const bool pDown = glfwGetKey(window, GLFW_KEY_P) == GLFW_PRESS;
+    if ((escapeDown && !wasEscapeDown) || (pDown && !wasPDown)) {
+      isPaused = !isPaused;
+    }
+    wasEscapeDown = escapeDown;
+    wasPDown = pDown;
+
+    if (std::abs(uiScale - lastAppliedUiScale) > 0.001f) {
+      ApplyUiScale(uiScale);
+      lastAppliedUiScale = uiScale;
+    }
+
+    if (isPaused) {
+      player.velocity = glm::vec3(0.0f);
+      clown.velocity.x = 0.0f;
+      clown.velocity.z = 0.0f;
     }
 
     glm::vec3 cameraForward = glm::normalize(glm::vec3(
@@ -729,7 +778,7 @@ int main() {
     static double lastX = 0.0;
     static double lastY = 0.0;
     static bool first = true;
-    if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
+    if (!isPaused && glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
       double x = 0.0;
       double y = 0.0;
       glfwGetCursorPos(window, &x, &y);
@@ -738,9 +787,9 @@ int main() {
         lastY = y;
         first = false;
       }
-      const float sensitivity = 0.005f;
-      const float dx = static_cast<float>(x - lastX) * sensitivity;
-      const float dy = static_cast<float>(y - lastY) * sensitivity;
+      const float dx = static_cast<float>(x - lastX) * mouseSensitivity;
+      const float dySign = invertLookY ? -1.0f : 1.0f;
+      const float dy = static_cast<float>(y - lastY) * mouseSensitivity * dySign;
       yaw -= dx;
       pitch -= dy;
       pitch = glm::clamp(pitch, glm::radians(-70.0f), glm::radians(20.0f));
@@ -750,8 +799,9 @@ int main() {
       first = true;
     }
 
-    glm::vec3 forwardXZ = glm::normalize(glm::vec3(cameraForward.x, 0.0f, cameraForward.z));
-    glm::vec3 rightXZ = glm::normalize(glm::cross(forwardXZ, glm::vec3(0.0f, 1.0f, 0.0f)));
+    if (!isPaused) {
+      glm::vec3 forwardXZ = glm::normalize(glm::vec3(cameraForward.x, 0.0f, cameraForward.z));
+      glm::vec3 rightXZ = glm::normalize(glm::cross(forwardXZ, glm::vec3(0.0f, 1.0f, 0.0f)));
 
     glm::vec3 inputDir(0.0f);
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
@@ -949,7 +999,7 @@ int main() {
       clown.onGround = true;
     }
 
-    int collectedCount = 0;
+      collectedCount = 0;
     for (Cat& cat : cats) {
       if (!cat.collected && glm::distance(player.position, cat.position) < 1.2f) {
         cat.collected = true;
@@ -1158,12 +1208,13 @@ int main() {
       cat.position += cat.velocity * deltaTime;
     }
 
-    if (!hasWon && collectedCount >= 10 && glm::distance(player.position, carPosition) < 2.2f) {
-      hasWon = true;
-      if (!winAnnounced) {
-        winAnnounced = true;
-        glfwSetWindowTitle(window, "Vibe 3D - You Win!");
-        std::cout << "You collected all cats and escaped!\n";
+      if (!hasWon && collectedCount >= 10 && glm::distance(player.position, carPosition) < 2.2f) {
+        hasWon = true;
+        if (!winAnnounced) {
+          winAnnounced = true;
+          glfwSetWindowTitle(window, "Vibe 3D - You Win!");
+          std::cout << "You collected all cats and escaped!\n";
+        }
       }
     }
 
@@ -1511,6 +1562,80 @@ int main() {
 
     glBindVertexArray(0);
 
+    if (audio.ready) {
+      ma_sound_set_volume(&audio.ambient.sound, musicVolume);
+      ma_sound_set_volume(&audio.footstep.sound, 0.45f * sfxVolume);
+      ma_sound_set_volume(&audio.jump.sound, 0.5f * sfxVolume);
+      ma_sound_set_volume(&audio.land.sound, 0.5f * sfxVolume);
+      ma_sound_set_volume(&audio.chase.sound, 0.6f * sfxVolume);
+    }
+
+    ImGuiWindowFlags hudFlags = ImGuiWindowFlags_NoDecoration |
+                                ImGuiWindowFlags_AlwaysAutoResize |
+                                ImGuiWindowFlags_NoSavedSettings |
+                                ImGuiWindowFlags_NoFocusOnAppearing |
+                                ImGuiWindowFlags_NoNav;
+    ImGui::SetNextWindowPos(ImVec2(12.0f, 12.0f), ImGuiCond_Always);
+    ImGui::SetNextWindowBgAlpha(0.45f);
+    ImGui::Begin("HUD", nullptr, hudFlags);
+    ImGui::Text("Cats: %d / %zu", collectedCount, cats.size());
+    ImGui::ProgressBar(stamina, ImVec2(180.0f, 0.0f), "Stamina");
+    ImGui::Text("Clown distance: %.1fm", glm::distance(player.position, clown.position));
+    if (!hasWon) {
+      const float carDistance = glm::distance(player.position, carPosition);
+      ImGui::Text("Car distance: %.1fm", carDistance);
+      if (collectedCount < 10) {
+        ImGui::Text("Objective: Find all cats");
+      } else {
+        ImGui::Text("Objective: Reach the car");
+      }
+    } else {
+      ImGui::Text("You escaped! 🎉");
+    }
+    ImGui::Text("Esc/P: Pause");
+    ImGui::End();
+
+    if (showDebugHud) {
+      ImGui::SetNextWindowPos(ImVec2(12.0f, 170.0f), ImGuiCond_Always);
+      ImGui::SetNextWindowBgAlpha(0.45f);
+      ImGui::Begin("Debug", nullptr, hudFlags);
+      ImGui::Text("Player: (%.2f, %.2f, %.2f)", player.position.x, player.position.y, player.position.z);
+      ImGui::Text("Clown:  (%.2f, %.2f, %.2f)", clown.position.x, clown.position.y, clown.position.z);
+      ImGui::Text("Camera yaw/pitch: %.2f / %.2f", yaw, pitch);
+      ImGui::End();
+    }
+
+    if (isPaused) {
+      const ImVec2 viewport = ImGui::GetIO().DisplaySize;
+      ImGui::SetNextWindowPos(ImVec2(viewport.x * 0.5f, viewport.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+      ImGui::SetNextWindowSize(ImVec2(420.0f, 0.0f), ImGuiCond_Always);
+      ImGui::Begin("Pause Menu", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
+      ImGui::Text("Game Paused");
+      ImGui::Separator();
+      ImGui::SliderFloat("Music Volume", &musicVolume, 0.0f, 1.0f);
+      ImGui::SliderFloat("SFX Volume", &sfxVolume, 0.0f, 1.0f);
+      ImGui::SliderFloat("GUI Scale", &uiScale, 0.85f, 2.8f, "%.2fx");
+      ImGui::SliderFloat("Mouse Sensitivity", &mouseSensitivity, 0.0015f, 0.02f, "%.4f");
+      ImGui::SliderFloat("Camera Distance", &cameraDistance, 3.0f, 10.0f);
+      ImGui::Checkbox("Invert Look Y", &invertLookY);
+      ImGui::Checkbox("Show Debug HUD", &showDebugHud);
+      ImGui::Separator();
+      if (ImGui::Button("Resume", ImVec2(-1.0f, 0.0f))) {
+        isPaused = false;
+      }
+      if (ImGui::Button("Reset Player", ImVec2(-1.0f, 0.0f))) {
+        player.position = playerSpawn;
+        player.velocity = glm::vec3(0.0f);
+      }
+      if (ImGui::Button("Quit Game", ImVec2(-1.0f, 0.0f))) {
+        glfwSetWindowShouldClose(window, GLFW_TRUE);
+      }
+      ImGui::End();
+    }
+
+    ImGui::Render();
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
     glfwSwapBuffers(window);
   }
 
@@ -1536,6 +1661,9 @@ int main() {
     ma_audio_buffer_uninit(&audio.chase.buffer);
     ma_engine_uninit(&audio.engine);
   }
+  ImGui_ImplOpenGL3_Shutdown();
+  ImGui_ImplGlfw_Shutdown();
+  ImGui::DestroyContext();
   glfwTerminate();
   return 0;
 }

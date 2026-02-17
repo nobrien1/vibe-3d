@@ -7,7 +7,8 @@ Minimal 3D platformer demo in C++ using OpenGL, GLFW, GLAD, and GLM.
 - W/A/S/D: Move
 - Space: Jump
 - Hold right mouse button: Orbit camera
-- Esc: Quit
+- Esc or P: Pause/Resume
+- Pause menu: Adjust audio/camera settings, toggle debug HUD, reset player, quit
 
 ## Build
 

@@ -45,6 +45,30 @@ if (NOT miniaudio_POPULATED)
   FetchContent_Populate(miniaudio)
 endif()
 
+FetchContent_Declare(
+  imgui
+  GIT_REPOSITORY https://github.com/ocornut/imgui.git
+  GIT_TAG v1.91.9b
+)
+FetchContent_GetProperties(imgui)
+if (NOT imgui_POPULATED)
+  FetchContent_Populate(imgui)
+endif()
+
+add_library(imgui STATIC
+  ${imgui_SOURCE_DIR}/imgui.cpp
+  ${imgui_SOURCE_DIR}/imgui_draw.cpp
+  ${imgui_SOURCE_DIR}/imgui_tables.cpp
+  ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+  ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
+  ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
+)
+target_include_directories(imgui PUBLIC
+  ${imgui_SOURCE_DIR}
+  ${imgui_SOURCE_DIR}/backends
+)
+target_link_libraries(imgui PUBLIC glfw)
+
 # Glad's CMake provides glad_add_library for on-demand loader generation.
 glad_add_library(glad_gl STATIC API gl:core=3.3)
 
@@ -52,7 +76,7 @@ add_executable(vibe3d
   src/main.cpp
 )
 
-target_link_libraries(vibe3d PRIVATE glfw glad_gl glm)
+target_link_libraries(vibe3d PRIVATE glfw glad_gl glm imgui)
 target_include_directories(vibe3d PRIVATE ${miniaudio_SOURCE_DIR})
 target_compile_definitions(vibe3d PRIVATE MINIAUDIO_IMPLEMENTATION)
 
