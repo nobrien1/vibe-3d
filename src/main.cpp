@@ -1457,13 +1457,13 @@ int main() {
         }
       }
 
-      const float dogRadius = 0.28f;
+      const float dogRadius = 0.44f;
       const float dogGround = platforms[0].position.y + platforms[0].halfExtents.y + dogRadius;
       for (Dog& dog : dogs) {
         dog.behaviorTimer -= deltaTime;
         dog.velocity.y += gravity * deltaTime;
 
-        if (!dog.collected && glm::distance(player.position, dog.position) < 1.15f) {
+        if (!dog.collected && glm::distance(player.position, dog.position) < 1.55f) {
           dog.collected = true;
           dog.behavior = Dog::Behavior::Following;
           dog.behaviorTimer = 0.0f;
@@ -1818,11 +1818,15 @@ int main() {
         if (dog.collected) {
           // Collected dogs still render and follow the player.
         }
+        const glm::vec3 coatDark(0.32f, 0.2f, 0.12f);
+        const glm::vec3 coatMid(0.42f, 0.27f, 0.16f);
+        const glm::vec3 coatLight(0.55f, 0.38f, 0.24f);
+        const glm::vec3 noseTint(0.08f, 0.06f, 0.05f);
         const float speed = glm::length(glm::vec2(dog.velocity.x, dog.velocity.z));
         const float walk = glm::clamp(speed / 4.5f, 0.0f, 1.0f);
-        const float bob = (0.03f + walk * 0.03f) * std::sin(dog.walkCycle * 2.0f + dog.bobOffset);
-        const float legSwing = std::sin(dog.walkCycle) * walk * 0.11f;
-        const float tailWag = (0.14f + walk * 0.2f) * std::sin(dog.walkCycle * 1.6f + 1.7f);
+        const float bob = (0.022f + walk * 0.032f) * std::sin(dog.walkCycle * 2.0f + dog.bobOffset);
+        const float legSwing = std::sin(dog.walkCycle) * walk * 0.16f;
+        const float tailWag = (0.1f + walk * 0.15f) * std::sin(dog.walkCycle * 1.45f + 1.7f);
         const glm::vec3 dogPos = dog.position + glm::vec3(0.0f, bob, 0.0f);
 
         auto DrawDogPart = [&](const glm::vec3& localPos, const glm::vec3& scale, const glm::vec3& tint) {
@@ -1838,26 +1842,46 @@ int main() {
           glDrawArrays(GL_TRIANGLES, 0, 36);
         };
 
-        DrawDogPart(glm::vec3(0.0f, 0.26f, 0.0f), glm::vec3(0.46f, 0.23f, 0.74f), glm::vec3(0.93f, 0.76f, 0.56f));
-        DrawDogPart(glm::vec3(0.0f, 0.4f, 0.46f), glm::vec3(0.32f, 0.24f, 0.32f), glm::vec3(0.96f, 0.82f, 0.62f));
-        DrawDogPart(glm::vec3(0.18f, 0.52f, 0.42f), glm::vec3(0.08f, 0.14f, 0.07f), glm::vec3(0.76f, 0.54f, 0.38f));
-        DrawDogPart(glm::vec3(-0.18f, 0.52f, 0.42f), glm::vec3(0.08f, 0.14f, 0.07f), glm::vec3(0.76f, 0.54f, 0.38f));
-        DrawDogPart(glm::vec3(0.0f, 0.34f, 0.62f), glm::vec3(0.08f, 0.06f, 0.08f), glm::vec3(0.18f, 0.14f, 0.14f));
-        DrawDogPart(glm::vec3(0.16f, 0.1f, 0.24f + legSwing), glm::vec3(0.09f, 0.2f, 0.09f), glm::vec3(0.9f, 0.72f, 0.52f));
-        DrawDogPart(glm::vec3(-0.16f, 0.1f, 0.24f - legSwing), glm::vec3(0.09f, 0.2f, 0.09f), glm::vec3(0.9f, 0.72f, 0.52f));
-        DrawDogPart(glm::vec3(0.16f, 0.1f, -0.22f - legSwing), glm::vec3(0.09f, 0.2f, 0.09f), glm::vec3(0.9f, 0.72f, 0.52f));
-        DrawDogPart(glm::vec3(-0.16f, 0.1f, -0.22f + legSwing), glm::vec3(0.09f, 0.2f, 0.09f), glm::vec3(0.9f, 0.72f, 0.52f));
+        auto DrawDogPartRot = [&](const glm::vec3& localPos, const glm::vec3& localRot,
+                                  const glm::vec3& scale, const glm::vec3& tint) {
+          glBindTexture(GL_TEXTURE_2D, catTexture);
+          glm::mat4 model(1.0f);
+          model = glm::translate(model, dogPos);
+          model = glm::rotate(model, dog.facing, glm::vec3(0.0f, 1.0f, 0.0f));
+          model = glm::translate(model, localPos);
+          model = glm::rotate(model, localRot.x, glm::vec3(1.0f, 0.0f, 0.0f));
+          model = glm::rotate(model, localRot.y, glm::vec3(0.0f, 1.0f, 0.0f));
+          model = glm::rotate(model, localRot.z, glm::vec3(0.0f, 0.0f, 1.0f));
+          model = glm::scale(model, scale);
+          shader.SetMat4("uModel", model);
+          shader.SetMat3("uNormalMatrix", glm::transpose(glm::inverse(glm::mat3(model))));
+          shader.SetVec3("uTint", tint);
+          glDrawArrays(GL_TRIANGLES, 0, 36);
+        };
+
+        DrawDogPart(glm::vec3(0.0f, 0.5f, 0.0f), glm::vec3(0.76f, 0.38f, 1.14f), coatMid);
+        DrawDogPartRot(glm::vec3(0.0f, 0.8f, 0.58f), glm::vec3(-0.55f, 0.0f, 0.0f), glm::vec3(0.3f, 0.5f, 0.34f), coatMid);
+        DrawDogPart(glm::vec3(0.0f, 0.92f, 0.96f), glm::vec3(0.48f, 0.34f, 0.5f), coatMid);
+        DrawDogPart(glm::vec3(0.0f, 0.87f, 1.22f), glm::vec3(0.24f, 0.16f, 0.24f), coatLight);
+        DrawDogPartRot(glm::vec3(0.36f, 0.88f, 0.92f), glm::vec3(0.0f, 0.0f, 0.55f), glm::vec3(0.11f, 0.36f, 0.09f), coatDark);
+        DrawDogPartRot(glm::vec3(-0.36f, 0.88f, 0.92f), glm::vec3(0.0f, 0.0f, -0.55f), glm::vec3(0.11f, 0.36f, 0.09f), coatDark);
+        DrawDogPart(glm::vec3(0.0f, 0.88f, 1.35f), glm::vec3(0.12f, 0.09f, 0.12f), noseTint);
+        DrawDogPart(glm::vec3(0.28f, 0.24f, 0.38f + legSwing), glm::vec3(0.15f, 0.5f, 0.15f), coatDark);
+        DrawDogPart(glm::vec3(-0.28f, 0.24f, 0.38f - legSwing), glm::vec3(0.15f, 0.5f, 0.15f), coatDark);
+        DrawDogPart(glm::vec3(0.28f, 0.24f, -0.34f - legSwing), glm::vec3(0.15f, 0.5f, 0.15f), coatDark);
+        DrawDogPart(glm::vec3(-0.28f, 0.24f, -0.34f + legSwing), glm::vec3(0.15f, 0.5f, 0.15f), coatDark);
 
         glBindTexture(GL_TEXTURE_2D, catTexture);
         glm::mat4 tailModel(1.0f);
         tailModel = glm::translate(tailModel, dogPos);
         tailModel = glm::rotate(tailModel, dog.facing, glm::vec3(0.0f, 1.0f, 0.0f));
-        tailModel = glm::translate(tailModel, glm::vec3(0.0f, 0.38f, -0.48f));
+        tailModel = glm::translate(tailModel, glm::vec3(0.0f, 0.58f, -0.82f));
+        tailModel = glm::rotate(tailModel, -0.45f, glm::vec3(1.0f, 0.0f, 0.0f));
         tailModel = glm::rotate(tailModel, tailWag, glm::vec3(0.0f, 1.0f, 0.0f));
-        tailModel = glm::scale(tailModel, glm::vec3(0.08f, 0.08f, 0.26f));
+        tailModel = glm::scale(tailModel, glm::vec3(0.13f, 0.13f, 0.5f));
         shader.SetMat4("uModel", tailModel);
         shader.SetMat3("uNormalMatrix", glm::transpose(glm::inverse(glm::mat3(tailModel))));
-        shader.SetVec3("uTint", glm::vec3(0.84f, 0.64f, 0.48f));
+        shader.SetVec3("uTint", coatDark);
         glDrawArrays(GL_TRIANGLES, 0, 36);
       }
 
