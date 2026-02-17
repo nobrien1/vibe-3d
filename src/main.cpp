@@ -222,6 +222,7 @@ struct Player {
   glm::vec3 velocity{0.0f};
   float halfSize = 0.5f;
   bool onGround = false;
+  float blastTimer = 0.0f;
 };
 
 struct Enemy {
@@ -292,6 +293,7 @@ struct Dog {
   float moveSpeed = 2.8f;
   float turnSpeed = 5.0f;
   unsigned int seed = 0;
+  float blastTimer = 0.0f;
 };
 
 struct Bomb {
@@ -968,6 +970,11 @@ int main() {
       inputDir = glm::vec3(0.0f);
     }
 
+    if (player.blastTimer > 0.0f) {
+      player.blastTimer = glm::max(0.0f, player.blastTimer - deltaTime);
+      inputDir = glm::vec3(0.0f);
+    }
+
     const bool wantsSprint = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS && stamina > 0.05f;
     const float targetSpeed = moveSpeed * (wantsSprint ? sprintMultiplier : 1.0f);
     const float accel = player.onGround ? accelGround : accelAir;
@@ -1429,7 +1436,7 @@ int main() {
       }
 
       const float bombGravity = -16.0f;
-      const float blastRadius = 2.1f;
+      const float blastRadius = 10.5f;
       const float groundTop = platforms[0].position.y + platforms[0].halfExtents.y;
       for (Bomb& bomb : bombs) {
         if (!bomb.active) {
@@ -1449,9 +1456,33 @@ int main() {
         }
 
         if (exploded) {
-          if (glm::distance(player.position, bomb.position) < blastRadius) {
-            player.position = levelTwoSpawn;
-            player.velocity = glm::vec3(0.0f);
+          auto ApplyBlastImpulse = [&](glm::vec3& entityPos, glm::vec3& entityVel, float& blastTimer) {
+            const glm::vec3 delta = entityPos - bomb.position;
+            const float distance = glm::length(delta);
+            if (distance >= blastRadius) {
+              return;
+            }
+            glm::vec3 horizontal = glm::vec3(delta.x, 0.0f, delta.z);
+            float horizontalLen = glm::length(horizontal);
+            if (horizontalLen < 0.001f) {
+              horizontal = glm::vec3(1.0f, 0.0f, 0.35f);
+              horizontalLen = glm::length(horizontal);
+            }
+            horizontal /= horizontalLen;
+            const float falloff = glm::clamp(1.0f - (distance / blastRadius), 0.0f, 1.0f);
+            const float shaped = 0.45f + 0.55f * falloff;
+            const float horizontalImpulse = 52.0f * shaped + 18.0f;
+            const float verticalImpulse = 24.0f * shaped + 10.0f;
+            entityVel += horizontal * horizontalImpulse;
+            entityVel.y += verticalImpulse;
+            blastTimer = glm::max(blastTimer, 0.6f + falloff * 0.45f);
+          };
+
+          ApplyBlastImpulse(player.position, player.velocity, player.blastTimer);
+          player.onGround = false;
+          for (Dog& dog : dogs) {
+            ApplyBlastImpulse(dog.position, dog.velocity, dog.blastTimer);
+            dog.onGround = false;
           }
           bomb.active = false;
         }
@@ -1460,6 +1491,9 @@ int main() {
       const float dogRadius = 0.44f;
       const float dogGround = platforms[0].position.y + platforms[0].halfExtents.y + dogRadius;
       for (Dog& dog : dogs) {
+        if (dog.blastTimer > 0.0f) {
+          dog.blastTimer = glm::max(0.0f, dog.blastTimer - deltaTime);
+        }
         dog.behaviorTimer -= deltaTime;
         dog.velocity.y += gravity * deltaTime;
 
@@ -1519,6 +1553,10 @@ int main() {
               dog.facing += facingDiff * dog.turnSpeed * deltaTime;
             }
           }
+        }
+
+        if (dog.blastTimer > 0.0f) {
+          desiredVelocity = glm::vec3(0.0f);
         }
 
         const float dogAccel = (dog.collected ? 16.0f : 10.0f) * deltaTime;
