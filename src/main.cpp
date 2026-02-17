@@ -277,6 +277,30 @@ struct Cat {
   unsigned int seed = 0;
 };
 
+struct Dog {
+  glm::vec3 position;
+  bool collected = false;
+  float bobOffset = 0.0f;
+  glm::vec3 velocity{0.0f};
+  bool onGround = false;
+  enum class Behavior { Idle, Wandering, Following };
+  Behavior behavior = Behavior::Idle;
+  float behaviorTimer = 0.0f;
+  glm::vec3 wanderTarget{0.0f};
+  float facing = 0.0f;
+  float walkCycle = 0.0f;
+  float moveSpeed = 2.8f;
+  float turnSpeed = 5.0f;
+  unsigned int seed = 0;
+};
+
+struct Bomb {
+  glm::vec3 position{0.0f};
+  glm::vec3 velocity{0.0f};
+  float timer = 0.0f;
+  bool active = false;
+};
+
 static void FramebufferSizeCallback(GLFWwindow* window, int width, int height) {
   (void)window;
   glViewport(0, 0, width, height);
@@ -755,7 +779,52 @@ int main() {
     cat.behavior = Cat::Behavior::Idle;
     cat.idleAnimTimer = 0.5f + RandomFloat(cat.seed) * 2.0f;
   }
-  const glm::vec3 carPosition(18.0f, 0.0f, 16.0f);
+  std::vector<Dog> dogs = {
+      {{-14.0f, 0.35f, -16.0f}, false, 0.1f},
+      {{-8.0f, 0.35f, -18.0f}, false, 0.4f},
+      {{-2.0f, 0.35f, -15.0f}, false, 1.0f},
+      {{4.0f, 0.35f, -17.0f}, false, 1.7f},
+      {{11.0f, 0.35f, -14.0f}, false, 2.1f},
+      {{16.0f, 0.35f, -8.0f}, false, 2.6f},
+      {{14.0f, 0.35f, -1.0f}, false, 3.0f},
+      {{9.0f, 0.35f, 4.0f}, false, 3.4f},
+      {{2.0f, 0.35f, 7.0f}, false, 3.9f},
+      {{-5.0f, 0.35f, 9.0f}, false, 4.3f},
+      {{-11.0f, 0.35f, 12.0f}, false, 4.8f},
+      {{-17.0f, 0.35f, 9.0f}, false, 5.2f},
+      {{-19.0f, 0.35f, 2.0f}, false, 5.7f},
+      {{-18.0f, 0.35f, -5.0f}, false, 6.1f},
+      {{-12.0f, 0.35f, -8.0f}, false, 0.7f},
+      {{-6.0f, 0.35f, -6.0f}, false, 1.4f},
+      {{0.0f, 0.35f, -2.0f}, false, 2.9f},
+      {{7.0f, 0.35f, -4.0f}, false, 3.7f},
+      {{12.0f, 0.35f, 10.0f}, false, 4.9f},
+      {{-2.0f, 0.35f, 15.0f}, false, 5.9f},
+  };
+  std::vector<Bomb> bombs(12);
+  unsigned int dogSeed = 9001u;
+  for (Dog& dog : dogs) {
+    dog.seed = dogSeed;
+    dogSeed = dogSeed * 1664525u + 1013904223u;
+    dog.moveSpeed = 2.4f + RandomFloat(dog.seed) * 1.6f;
+    dog.turnSpeed = 4.0f + RandomFloat(dog.seed) * 2.5f;
+    dog.behaviorTimer = 0.6f + RandomFloat(dog.seed) * 2.2f;
+    dog.facing = RandomFloat(dog.seed) * 6.28318f;
+    dog.wanderTarget = dog.position;
+  }
+  Enemy mummy;
+  mummy.position = glm::vec3(-2.0f, 0.45f, -10.0f);
+  mummy.speed = 2.2f;
+  float mummyFacing = 0.0f;
+  float mummyWalkCycle = 0.0f;
+  float mummyThrowCooldown = 1.4f;
+  const glm::vec3 levelOneSpawn = playerSpawn;
+  const glm::vec3 levelTwoSpawn(-16.0f, 2.0f, -16.0f);
+  const glm::vec3 carPositionLevel1(18.0f, 0.0f, 16.0f);
+  const glm::vec3 carPositionLevel2(-18.0f, 0.0f, 18.0f);
+  enum class GameLevel { Level1Cats, Level2Dogs };
+  GameLevel currentLevel = GameLevel::Level1Cats;
+  bool levelOneAnnounced = false;
   const std::vector<CloudCluster> clouds = {
       {glm::vec3(-16.0f, 14.0f, -18.0f), glm::normalize(glm::vec2(1.0f, 0.2f)), 0.55f, 0.05f,
        {{glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(5.2f, 1.1f, 2.6f)},
@@ -842,6 +911,8 @@ int main() {
       player.velocity = glm::vec3(0.0f);
       clown.velocity.x = 0.0f;
       clown.velocity.z = 0.0f;
+      mummy.velocity.x = 0.0f;
+      mummy.velocity.z = 0.0f;
     }
 
     glm::vec3 cameraForward = glm::normalize(glm::vec3(
@@ -958,6 +1029,7 @@ int main() {
       }
     }
 
+    if (currentLevel == GameLevel::Level1Cats) {
     const float enemyGround = platforms[0].position.y + platforms[0].halfExtents.y + clown.halfSize;
     const float playerDistance = glm::length(player.position - clown.position);
     const float aggroRange = 18.0f;
@@ -1066,7 +1138,7 @@ int main() {
 
     const float hitDistance = player.halfSize + clown.halfSize + 0.1f;
     if (glm::distance(player.position, clown.position) < hitDistance) {
-      player.position = playerSpawn;
+      player.position = levelOneSpawn;
       player.velocity = glm::vec3(0.0f);
       clown.position = glm::vec3(4.0f, enemyGround, -4.0f);
       clown.velocity = glm::vec3(0.0f);
@@ -1282,14 +1354,221 @@ int main() {
       cat.position += cat.velocity * deltaTime;
     }
 
-      if (!hasWon && collectedCount >= 10 && glm::distance(player.position, carPosition) < 2.2f) {
+      if (!levelOneAnnounced && collectedCount >= 10 && glm::distance(player.position, carPositionLevel1) < 2.2f) {
+        levelOneAnnounced = true;
+        currentLevel = GameLevel::Level2Dogs;
+        player.position = levelTwoSpawn;
+        player.velocity = glm::vec3(0.0f);
+        clown.velocity = glm::vec3(0.0f);
+        mummy.position = glm::vec3(-2.0f, 0.45f, -10.0f);
+        mummy.velocity = glm::vec3(0.0f);
+        mummyThrowCooldown = 1.25f;
+        for (Bomb& bomb : bombs) {
+          bomb.active = false;
+        }
+        glfwSetWindowTitle(window, "Vibe 3D - Level 2: Rescue the Dogs");
+        std::cout << "Level 2 unlocked! Collect 20 dogs and escape the mummy.\n";
+      }
+    } else {
+      const float enemyGround = platforms[0].position.y + platforms[0].halfExtents.y + mummy.halfSize;
+      const glm::vec3 toPlayer = player.position - mummy.position;
+      glm::vec3 moveDir(toPlayer.x, 0.0f, toPlayer.z);
+      if (glm::length(moveDir) > 0.001f) {
+        moveDir = glm::normalize(moveDir);
+      }
+
+      const float desiredDistance = 8.0f;
+      const float dist2D = glm::length(glm::vec2(toPlayer.x, toPlayer.z));
+      const float approach = glm::clamp((dist2D - desiredDistance) / 6.0f, -1.0f, 1.0f);
+      mummy.velocity.x = moveDir.x * mummy.speed * approach;
+      mummy.velocity.z = moveDir.z * mummy.speed * approach;
+      mummy.velocity.y += gravity * deltaTime;
+      mummy.position += mummy.velocity * deltaTime;
+
+      mummy.onGround = false;
+      if (mummy.position.y < enemyGround) {
+        mummy.position.y = enemyGround;
+        mummy.velocity.y = 0.0f;
+        mummy.onGround = true;
+      }
+
+      for (size_t i = 1; i < platforms.size(); ++i) {
+        const Platform& platform = platforms[i];
+        const float platformTop = platform.position.y + platform.halfExtents.y;
+        const bool withinX = std::abs(mummy.position.x - platform.position.x) <= (platform.halfExtents.x + mummy.halfSize);
+        const bool withinZ = std::abs(mummy.position.z - platform.position.z) <= (platform.halfExtents.z + mummy.halfSize);
+        const bool falling = mummy.velocity.y <= 0.0f;
+        if (withinX && withinZ && falling) {
+          const float mummyBottom = mummy.position.y - mummy.halfSize;
+          if (mummyBottom < platformTop && mummy.position.y > platformTop - 0.6f) {
+            mummy.position.y = platformTop + mummy.halfSize;
+            mummy.velocity.y = 0.0f;
+            mummy.onGround = true;
+          }
+        }
+      }
+
+      mummyThrowCooldown -= deltaTime;
+      if (mummyThrowCooldown <= 0.0f && dist2D < 26.0f) {
+        for (Bomb& bomb : bombs) {
+          if (!bomb.active) {
+            bomb.active = true;
+            bomb.timer = 3.5f;
+            bomb.position = mummy.position + glm::vec3(0.0f, mummy.halfSize + 0.6f, 0.0f);
+            glm::vec3 throwDir = player.position - bomb.position;
+            throwDir.y = 0.0f;
+            if (glm::length(throwDir) > 0.001f) {
+              throwDir = glm::normalize(throwDir);
+            }
+            bomb.velocity = throwDir * (7.5f + glm::clamp(dist2D / 16.0f, 0.0f, 1.2f));
+            bomb.velocity.y = 6.2f;
+            break;
+          }
+        }
+        mummyThrowCooldown = 1.1f;
+      }
+
+      const float bombGravity = -16.0f;
+      const float blastRadius = 2.1f;
+      const float groundTop = platforms[0].position.y + platforms[0].halfExtents.y;
+      for (Bomb& bomb : bombs) {
+        if (!bomb.active) {
+          continue;
+        }
+        bomb.timer -= deltaTime;
+        bomb.velocity.y += bombGravity * deltaTime;
+        bomb.position += bomb.velocity * deltaTime;
+
+        bool exploded = false;
+        if (bomb.position.y <= groundTop + 0.25f) {
+          bomb.position.y = groundTop + 0.25f;
+          exploded = true;
+        }
+        if (bomb.timer <= 0.0f) {
+          exploded = true;
+        }
+
+        if (exploded) {
+          if (glm::distance(player.position, bomb.position) < blastRadius) {
+            player.position = levelTwoSpawn;
+            player.velocity = glm::vec3(0.0f);
+          }
+          bomb.active = false;
+        }
+      }
+
+      const float dogRadius = 0.28f;
+      const float dogGround = platforms[0].position.y + platforms[0].halfExtents.y + dogRadius;
+      for (Dog& dog : dogs) {
+        dog.behaviorTimer -= deltaTime;
+        dog.velocity.y += gravity * deltaTime;
+
+        if (!dog.collected && glm::distance(player.position, dog.position) < 1.15f) {
+          dog.collected = true;
+          dog.behavior = Dog::Behavior::Following;
+          dog.behaviorTimer = 0.0f;
+        }
+
+        glm::vec3 desiredVelocity(0.0f);
+        const float distToPlayer = glm::length(glm::vec2(player.position.x - dog.position.x,
+                                                          player.position.z - dog.position.z));
+
+        if (dog.collected) {
+          if (dog.behaviorTimer <= 0.0f || distToPlayer > 4.8f) {
+            const float angle = RandomFloat(dog.seed) * 6.28318f;
+            const float radius = (distToPlayer > 4.8f) ? 0.45f : (1.2f + RandomFloat(dog.seed) * 1.5f);
+            dog.wanderTarget = player.position + glm::vec3(std::cos(angle) * radius, 0.0f, std::sin(angle) * radius);
+            dog.behaviorTimer = (distToPlayer > 4.8f) ? 0.35f : (0.9f + RandomFloat(dog.seed) * 1.4f);
+          }
+          const glm::vec3 toTarget = dog.wanderTarget - dog.position;
+          const float distToTarget = glm::length(glm::vec2(toTarget.x, toTarget.z));
+          if (distToTarget > 0.25f && !hasWon) {
+            const glm::vec3 dir = glm::normalize(glm::vec3(toTarget.x, 0.0f, toTarget.z));
+            const float catchup = glm::clamp((distToPlayer - 2.0f) / 4.5f, 0.0f, 1.0f);
+            desiredVelocity = dir * dog.moveSpeed * (1.0f + catchup * 1.1f);
+            const float targetFacing = std::atan2(dir.x, dir.z);
+            float facingDiff = targetFacing - dog.facing;
+            while (facingDiff > 3.14159f) facingDiff -= 6.28318f;
+            while (facingDiff < -3.14159f) facingDiff += 6.28318f;
+            dog.facing += facingDiff * dog.turnSpeed * deltaTime;
+          }
+        } else {
+          if (dog.behaviorTimer <= 0.0f) {
+            if (RandomFloat(dog.seed) < 0.45f) {
+              dog.behavior = Dog::Behavior::Idle;
+              dog.behaviorTimer = 0.8f + RandomFloat(dog.seed) * 1.6f;
+            } else {
+              dog.behavior = Dog::Behavior::Wandering;
+              const float angle = RandomFloat(dog.seed) * 6.28318f;
+              const float dist = 1.2f + RandomFloat(dog.seed) * 2.5f;
+              dog.wanderTarget = dog.position + glm::vec3(std::cos(angle) * dist, 0.0f, std::sin(angle) * dist);
+              dog.behaviorTimer = 1.0f + RandomFloat(dog.seed) * 2.0f;
+            }
+          }
+
+          if (dog.behavior == Dog::Behavior::Wandering) {
+            const glm::vec3 toTarget = dog.wanderTarget - dog.position;
+            const float distToTarget = glm::length(glm::vec2(toTarget.x, toTarget.z));
+            if (distToTarget > 0.35f) {
+              const glm::vec3 dir = glm::normalize(glm::vec3(toTarget.x, 0.0f, toTarget.z));
+              desiredVelocity = dir * (dog.moveSpeed * 0.5f);
+              const float targetFacing = std::atan2(dir.x, dir.z);
+              float facingDiff = targetFacing - dog.facing;
+              while (facingDiff > 3.14159f) facingDiff -= 6.28318f;
+              while (facingDiff < -3.14159f) facingDiff += 6.28318f;
+              dog.facing += facingDiff * dog.turnSpeed * deltaTime;
+            }
+          }
+        }
+
+        const float dogAccel = (dog.collected ? 16.0f : 10.0f) * deltaTime;
+        dog.velocity.x = glm::mix(dog.velocity.x, desiredVelocity.x, glm::clamp(dogAccel, 0.0f, 1.0f));
+        dog.velocity.z = glm::mix(dog.velocity.z, desiredVelocity.z, glm::clamp(dogAccel, 0.0f, 1.0f));
+
+        dog.position += dog.velocity * deltaTime;
+
+        dog.onGround = false;
+        if (dog.position.y < dogGround) {
+          dog.position.y = dogGround;
+          dog.velocity.y = 0.0f;
+          dog.onGround = true;
+        }
+        for (size_t i = 1; i < platforms.size(); ++i) {
+          const Platform& platform = platforms[i];
+          const float platformTop = platform.position.y + platform.halfExtents.y;
+          const bool withinX = std::abs(dog.position.x - platform.position.x) <= (platform.halfExtents.x + dogRadius);
+          const bool withinZ = std::abs(dog.position.z - platform.position.z) <= (platform.halfExtents.z + dogRadius);
+          const bool falling = dog.velocity.y <= 0.0f;
+          if (withinX && withinZ && falling) {
+            const float dogBottom = dog.position.y - dogRadius;
+            if (dogBottom < platformTop && dog.position.y > platformTop - 0.6f) {
+              dog.position.y = platformTop + dogRadius;
+              dog.velocity.y = 0.0f;
+              dog.onGround = true;
+            }
+          }
+        }
+
+        const float speed = glm::length(glm::vec2(dog.velocity.x, dog.velocity.z));
+        dog.walkCycle += speed * deltaTime * 3.2f;
+      }
+
+      collectedCount = 0;
+      for (const Dog& dog : dogs) {
+        if (dog.collected) {
+          collectedCount++;
+        }
+      }
+
+      if (!hasWon && collectedCount >= 20 && glm::distance(player.position, carPositionLevel2) < 2.2f) {
         hasWon = true;
         if (!winAnnounced) {
           winAnnounced = true;
           glfwSetWindowTitle(window, "Vibe 3D - You Win!");
-          std::cout << "You collected all cats and escaped!\n";
+          std::cout << "You rescued 20 dogs and escaped the mummy!\n";
         }
       }
+    }
     }
 
     const glm::vec3 cameraOffset = cameraForward * -cameraDistance + glm::vec3(0.0f, 2.0f, 0.0f);
@@ -1375,6 +1654,7 @@ int main() {
       }
     }
 
+    if (currentLevel == GameLevel::Level1Cats) {
     int catIndex = 0;
     for (const Cat& cat : cats) {
       const float speed = glm::length(glm::vec2(cat.velocity.x, cat.velocity.z));
@@ -1533,9 +1813,65 @@ int main() {
 
       catIndex++;
     }
+    } else {
+      for (const Dog& dog : dogs) {
+        if (dog.collected) {
+          // Collected dogs still render and follow the player.
+        }
+        const float speed = glm::length(glm::vec2(dog.velocity.x, dog.velocity.z));
+        const float walk = glm::clamp(speed / 4.5f, 0.0f, 1.0f);
+        const float bob = (0.03f + walk * 0.03f) * std::sin(dog.walkCycle * 2.0f + dog.bobOffset);
+        const float legSwing = std::sin(dog.walkCycle) * walk * 0.11f;
+        const float tailWag = (0.14f + walk * 0.2f) * std::sin(dog.walkCycle * 1.6f + 1.7f);
+        const glm::vec3 dogPos = dog.position + glm::vec3(0.0f, bob, 0.0f);
 
-    DrawCube(carPosition + glm::vec3(0.0f, 0.5f, 0.0f), glm::vec3(1.2f, 0.5f, 2.0f), glm::vec3(0.4f, 0.6f, 0.9f), carTexture);
-    DrawCube(carPosition + glm::vec3(0.0f, 1.0f, -0.2f), glm::vec3(0.8f, 0.35f, 1.0f), glm::vec3(0.7f, 0.8f, 0.9f), carTexture);
+        auto DrawDogPart = [&](const glm::vec3& localPos, const glm::vec3& scale, const glm::vec3& tint) {
+          glBindTexture(GL_TEXTURE_2D, catTexture);
+          glm::mat4 model(1.0f);
+          model = glm::translate(model, dogPos);
+          model = glm::rotate(model, dog.facing, glm::vec3(0.0f, 1.0f, 0.0f));
+          model = glm::translate(model, localPos);
+          model = glm::scale(model, scale);
+          shader.SetMat4("uModel", model);
+          shader.SetMat3("uNormalMatrix", glm::transpose(glm::inverse(glm::mat3(model))));
+          shader.SetVec3("uTint", tint);
+          glDrawArrays(GL_TRIANGLES, 0, 36);
+        };
+
+        DrawDogPart(glm::vec3(0.0f, 0.26f, 0.0f), glm::vec3(0.46f, 0.23f, 0.74f), glm::vec3(0.93f, 0.76f, 0.56f));
+        DrawDogPart(glm::vec3(0.0f, 0.4f, 0.46f), glm::vec3(0.32f, 0.24f, 0.32f), glm::vec3(0.96f, 0.82f, 0.62f));
+        DrawDogPart(glm::vec3(0.18f, 0.52f, 0.42f), glm::vec3(0.08f, 0.14f, 0.07f), glm::vec3(0.76f, 0.54f, 0.38f));
+        DrawDogPart(glm::vec3(-0.18f, 0.52f, 0.42f), glm::vec3(0.08f, 0.14f, 0.07f), glm::vec3(0.76f, 0.54f, 0.38f));
+        DrawDogPart(glm::vec3(0.0f, 0.34f, 0.62f), glm::vec3(0.08f, 0.06f, 0.08f), glm::vec3(0.18f, 0.14f, 0.14f));
+        DrawDogPart(glm::vec3(0.16f, 0.1f, 0.24f + legSwing), glm::vec3(0.09f, 0.2f, 0.09f), glm::vec3(0.9f, 0.72f, 0.52f));
+        DrawDogPart(glm::vec3(-0.16f, 0.1f, 0.24f - legSwing), glm::vec3(0.09f, 0.2f, 0.09f), glm::vec3(0.9f, 0.72f, 0.52f));
+        DrawDogPart(glm::vec3(0.16f, 0.1f, -0.22f - legSwing), glm::vec3(0.09f, 0.2f, 0.09f), glm::vec3(0.9f, 0.72f, 0.52f));
+        DrawDogPart(glm::vec3(-0.16f, 0.1f, -0.22f + legSwing), glm::vec3(0.09f, 0.2f, 0.09f), glm::vec3(0.9f, 0.72f, 0.52f));
+
+        glBindTexture(GL_TEXTURE_2D, catTexture);
+        glm::mat4 tailModel(1.0f);
+        tailModel = glm::translate(tailModel, dogPos);
+        tailModel = glm::rotate(tailModel, dog.facing, glm::vec3(0.0f, 1.0f, 0.0f));
+        tailModel = glm::translate(tailModel, glm::vec3(0.0f, 0.38f, -0.48f));
+        tailModel = glm::rotate(tailModel, tailWag, glm::vec3(0.0f, 1.0f, 0.0f));
+        tailModel = glm::scale(tailModel, glm::vec3(0.08f, 0.08f, 0.26f));
+        shader.SetMat4("uModel", tailModel);
+        shader.SetMat3("uNormalMatrix", glm::transpose(glm::inverse(glm::mat3(tailModel))));
+        shader.SetVec3("uTint", glm::vec3(0.84f, 0.64f, 0.48f));
+        glDrawArrays(GL_TRIANGLES, 0, 36);
+      }
+
+      for (const Bomb& bomb : bombs) {
+        if (!bomb.active) {
+          continue;
+        }
+        DrawCube(bomb.position, glm::vec3(0.22f, 0.22f, 0.22f), glm::vec3(0.22f, 0.22f, 0.25f), knifeTexture);
+      }
+    }
+
+    const glm::vec3 activeCarPos = (currentLevel == GameLevel::Level1Cats) ? carPositionLevel1 : carPositionLevel2;
+    DrawCube(activeCarPos + glm::vec3(0.0f, 0.5f, 0.0f), glm::vec3(1.2f, 0.5f, 2.0f), glm::vec3(0.4f, 0.6f, 0.9f), carTexture);
+    DrawCube(activeCarPos + glm::vec3(0.0f, 1.0f, -0.2f), glm::vec3(0.8f, 0.35f, 1.0f), glm::vec3(0.7f, 0.8f, 0.9f), carTexture);
 
     auto DrawHumanoid = [&](const glm::vec3& basePos, float size, const glm::vec3& bodyTint,
                             const glm::vec3& skinTint, const glm::vec3& accentTint,
@@ -1625,44 +1961,71 @@ int main() {
            playerTexture, playerSkinTexture, playerTexture,
                  playerWalkCycle, playerWalk, playerFacing);
 
-    const float clownSize = clown.halfSize * 2.0f;
-    const float clownSpeed = glm::length(glm::vec2(clown.velocity.x, clown.velocity.z));
-    const float clownWalk = glm::clamp(clownSpeed / clown.speed, 0.0f, 1.0f);
-    clownWalkCycle += clownWalk * (2.5f + clownWalk * 6.0f) * deltaTime;
-    if (clownSpeed > 0.05f) {
-      clownFacing = std::atan2(clown.velocity.x, clown.velocity.z);
+    if (currentLevel == GameLevel::Level1Cats) {
+      const float clownSize = clown.halfSize * 2.0f;
+      const float clownSpeed = glm::length(glm::vec2(clown.velocity.x, clown.velocity.z));
+      const float clownWalk = glm::clamp(clownSpeed / clown.speed, 0.0f, 1.0f);
+      clownWalkCycle += clownWalk * (2.5f + clownWalk * 6.0f) * deltaTime;
+      if (clownSpeed > 0.05f) {
+        clownFacing = std::atan2(clown.velocity.x, clown.velocity.z);
+      }
+      DrawHumanoid(clown.position, clownSize,
+             glm::vec3(0.95f, 0.2f, 0.2f),
+             glm::vec3(1.0f, 0.9f, 0.85f),
+             glm::vec3(0.2f, 0.2f, 0.2f),
+             clownTexture, clownSkinTexture, clownAccentTexture,
+                   clownWalkCycle, clownWalk, clownFacing);
+
+      const float clownSwing = std::sin(clownWalkCycle) * clownWalk;
+      const float clownArmRot = -clownSwing * 1.1f;
+      const float clownTorsoHeight = clownSize * 1.2f;
+      const float clownTorsoWidth = clownSize * 0.75f;
+      const float clownLegHeight = clownSize * 0.9f;
+      const float clownArmHeight = clownSize * 0.75f;
+      const float clownArmSwing = -clownSwing * clownSize * 0.22f;
+      const float clownTorsoSway = clownSwing * clownSize * 0.08f;
+      const glm::vec3 clownRoot = clown.position;
+
+      glm::mat4 handModel(1.0f);
+      handModel = glm::translate(handModel, clownRoot);
+      handModel = glm::rotate(handModel, clownFacing, glm::vec3(0.0f, 1.0f, 0.0f));
+      handModel = glm::translate(handModel, glm::vec3(clownTorsoWidth * 0.85f,
+                              clownLegHeight + clownTorsoHeight * 0.95f,
+                              clownArmSwing + clownTorsoSway));
+      handModel = glm::rotate(handModel, clownArmRot, glm::vec3(1.0f, 0.0f, 0.0f));
+      handModel = glm::translate(handModel, glm::vec3(0.0f, -clownArmHeight * 0.9f, 0.0f));
+      handModel = glm::scale(handModel, glm::vec3(clownSize * 0.15f, clownSize * 0.35f, clownSize * 0.6f));
+      shader.SetMat4("uModel", handModel);
+      shader.SetMat3("uNormalMatrix", glm::transpose(glm::inverse(glm::mat3(handModel))));
+      shader.SetVec3("uTint", glm::vec3(0.85f, 0.85f, 0.9f));
+      glBindTexture(GL_TEXTURE_2D, knifeTexture);
+      glDrawArrays(GL_TRIANGLES, 0, 36);
+    } else {
+      const float mummySize = mummy.halfSize * 2.0f;
+      const float mummySpeed = glm::length(glm::vec2(mummy.velocity.x, mummy.velocity.z));
+      const float mummyWalk = glm::clamp(mummySpeed / glm::max(mummy.speed, 0.001f), 0.0f, 1.0f);
+      mummyWalkCycle += mummyWalk * (2.2f + mummyWalk * 4.0f) * deltaTime;
+      if (mummySpeed > 0.05f) {
+        mummyFacing = std::atan2(mummy.velocity.x, mummy.velocity.z);
+      }
+      DrawHumanoid(mummy.position, mummySize,
+             glm::vec3(0.84f, 0.82f, 0.74f),
+             glm::vec3(0.88f, 0.83f, 0.73f),
+             glm::vec3(0.75f, 0.72f, 0.66f),
+             platformTexture, playerSkinTexture, platformTexture,
+                   mummyWalkCycle, mummyWalk, mummyFacing);
+
+      glm::mat4 bombHand(1.0f);
+      bombHand = glm::translate(bombHand, mummy.position);
+      bombHand = glm::rotate(bombHand, mummyFacing, glm::vec3(0.0f, 1.0f, 0.0f));
+      bombHand = glm::translate(bombHand, glm::vec3(0.42f, mummySize * 1.5f, 0.1f));
+      bombHand = glm::scale(bombHand, glm::vec3(mummySize * 0.2f, mummySize * 0.2f, mummySize * 0.2f));
+      shader.SetMat4("uModel", bombHand);
+      shader.SetMat3("uNormalMatrix", glm::transpose(glm::inverse(glm::mat3(bombHand))));
+      shader.SetVec3("uTint", glm::vec3(0.22f, 0.22f, 0.24f));
+      glBindTexture(GL_TEXTURE_2D, knifeTexture);
+      glDrawArrays(GL_TRIANGLES, 0, 36);
     }
-    DrawHumanoid(clown.position, clownSize,
-           glm::vec3(0.95f, 0.2f, 0.2f),
-           glm::vec3(1.0f, 0.9f, 0.85f),
-           glm::vec3(0.2f, 0.2f, 0.2f),
-           clownTexture, clownSkinTexture, clownAccentTexture,
-                 clownWalkCycle, clownWalk, clownFacing);
-
-    const float clownSwing = std::sin(clownWalkCycle) * clownWalk;
-    const float clownArmRot = -clownSwing * 1.1f;
-    const float clownTorsoHeight = clownSize * 1.2f;
-    const float clownTorsoWidth = clownSize * 0.75f;
-    const float clownLegHeight = clownSize * 0.9f;
-    const float clownArmHeight = clownSize * 0.75f;
-    const float clownArmSwing = -clownSwing * clownSize * 0.22f;
-    const float clownTorsoSway = clownSwing * clownSize * 0.08f;
-    const glm::vec3 clownRoot = clown.position;
-
-    glm::mat4 handModel(1.0f);
-    handModel = glm::translate(handModel, clownRoot);
-    handModel = glm::rotate(handModel, clownFacing, glm::vec3(0.0f, 1.0f, 0.0f));
-    handModel = glm::translate(handModel, glm::vec3(clownTorsoWidth * 0.85f,
-                            clownLegHeight + clownTorsoHeight * 0.95f,
-                            clownArmSwing + clownTorsoSway));
-    handModel = glm::rotate(handModel, clownArmRot, glm::vec3(1.0f, 0.0f, 0.0f));
-    handModel = glm::translate(handModel, glm::vec3(0.0f, -clownArmHeight * 0.9f, 0.0f));
-    handModel = glm::scale(handModel, glm::vec3(clownSize * 0.15f, clownSize * 0.35f, clownSize * 0.6f));
-    shader.SetMat4("uModel", handModel);
-    shader.SetMat3("uNormalMatrix", glm::transpose(glm::inverse(glm::mat3(handModel))));
-    shader.SetVec3("uTint", glm::vec3(0.85f, 0.85f, 0.9f));
-    glBindTexture(GL_TEXTURE_2D, knifeTexture);
-    glDrawArrays(GL_TRIANGLES, 0, 36);
 
     glBindVertexArray(0);
 
@@ -1682,16 +2045,35 @@ int main() {
     ImGui::SetNextWindowPos(ImVec2(12.0f, 12.0f), ImGuiCond_Always);
     ImGui::SetNextWindowBgAlpha(0.45f);
     ImGui::Begin("HUD", nullptr, hudFlags);
-    ImGui::Text("Cats: %d / %zu", collectedCount, cats.size());
+    if (currentLevel == GameLevel::Level1Cats) {
+      ImGui::Text("Level 1 - Cats");
+      ImGui::Text("Cats: %d / %zu", collectedCount, cats.size());
+    } else {
+      ImGui::Text("Level 2 - Dogs");
+      ImGui::Text("Dogs: %d / %zu", collectedCount, dogs.size());
+    }
     ImGui::ProgressBar(stamina, ImVec2(180.0f, 0.0f), "Stamina");
-    ImGui::Text("Clown distance: %.1fm", glm::distance(player.position, clown.position));
+    if (currentLevel == GameLevel::Level1Cats) {
+      ImGui::Text("Clown distance: %.1fm", glm::distance(player.position, clown.position));
+    } else {
+      ImGui::Text("Mummy distance: %.1fm", glm::distance(player.position, mummy.position));
+    }
     if (!hasWon) {
-      const float carDistance = glm::distance(player.position, carPosition);
+      const glm::vec3 activeCarPos = (currentLevel == GameLevel::Level1Cats) ? carPositionLevel1 : carPositionLevel2;
+      const float carDistance = glm::distance(player.position, activeCarPos);
       ImGui::Text("Car distance: %.1fm", carDistance);
-      if (collectedCount < 10) {
-        ImGui::Text("Objective: Find all cats");
+      if (currentLevel == GameLevel::Level1Cats) {
+        if (collectedCount < 10) {
+          ImGui::Text("Objective: Find all cats");
+        } else {
+          ImGui::Text("Objective: Reach the car");
+        }
       } else {
-        ImGui::Text("Objective: Reach the car");
+        if (collectedCount < 20) {
+          ImGui::Text("Objective: Rescue 20 very cute dogs");
+        } else {
+          ImGui::Text("Objective: Reach the car");
+        }
       }
     } else {
       ImGui::Text("You escaped! 🎉");
@@ -1704,7 +2086,11 @@ int main() {
       ImGui::SetNextWindowBgAlpha(0.45f);
       ImGui::Begin("Debug", nullptr, hudFlags);
       ImGui::Text("Player: (%.2f, %.2f, %.2f)", player.position.x, player.position.y, player.position.z);
-      ImGui::Text("Clown:  (%.2f, %.2f, %.2f)", clown.position.x, clown.position.y, clown.position.z);
+      if (currentLevel == GameLevel::Level1Cats) {
+        ImGui::Text("Clown:  (%.2f, %.2f, %.2f)", clown.position.x, clown.position.y, clown.position.z);
+      } else {
+        ImGui::Text("Mummy:  (%.2f, %.2f, %.2f)", mummy.position.x, mummy.position.y, mummy.position.z);
+      }
       ImGui::Text("Camera yaw/pitch: %.2f / %.2f", yaw, pitch);
       ImGui::End();
     }
@@ -1728,7 +2114,7 @@ int main() {
         isPaused = false;
       }
       if (ImGui::Button("Reset Player", ImVec2(-1.0f, 0.0f))) {
-        player.position = playerSpawn;
+        player.position = (currentLevel == GameLevel::Level1Cats) ? levelOneSpawn : levelTwoSpawn;
         player.velocity = glm::vec3(0.0f);
       }
       if (ImGui::Button("Quit Game", ImVec2(-1.0f, 0.0f))) {
