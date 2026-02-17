@@ -972,8 +972,8 @@ int main() {
     glfwSetWindowTitle(window, "Vibe 3D - Level 2: Rescue the Dogs");
   };
 
-  auto LoseLife = [&]() {
-    if (lifeHitCooldown > 0.0f || isDead || hasWon) {
+  auto LoseLife = [&](bool respawnPlayer, bool ignoreCooldown) {
+    if (((lifeHitCooldown > 0.0f) && !ignoreCooldown) || isDead || hasWon) {
       return;
     }
     livesRemaining = glm::max(0, livesRemaining - 1);
@@ -988,9 +988,11 @@ int main() {
       return;
     }
 
-    const glm::vec3 respawn = (currentLevel == GameLevel::Level1Cats) ? levelOneSpawn : levelTwoSpawn;
-    player.position = respawn;
-    player.velocity = glm::vec3(0.0f);
+    if (respawnPlayer) {
+      const glm::vec3 respawn = (currentLevel == GameLevel::Level1Cats) ? levelOneSpawn : levelTwoSpawn;
+      player.position = respawn;
+      player.velocity = glm::vec3(0.0f);
+    }
   };
 
   shader.Use();
@@ -1257,7 +1259,7 @@ int main() {
 
     const float hitDistance = player.halfSize + clown.halfSize + 0.1f;
     if (glm::distance(player.position, clown.position) < hitDistance) {
-      LoseLife();
+      LoseLife(true, false);
       clown.position = glm::vec3(4.0f, enemyGround, -4.0f);
       clown.velocity = glm::vec3(0.0f);
       clown.onGround = true;
@@ -1550,7 +1552,6 @@ int main() {
 
       const float bombGravity = -16.0f;
       const float blastRadius = 10.5f;
-      const float explosionDamageRadius = 3.3f;
       const float groundTop = platforms[0].position.y + platforms[0].halfExtents.y;
 
       for (size_t i = 0; i < explosions.size();) {
@@ -1581,10 +1582,6 @@ int main() {
         }
 
         if (exploded) {
-          if (glm::distance(player.position, bomb.position) < explosionDamageRadius) {
-            LoseLife();
-          }
-
           Explosion explosion;
           explosion.position = bomb.position;
           explosion.age = 0.0f;
@@ -1599,7 +1596,7 @@ int main() {
             const glm::vec3 delta = entityPos - bomb.position;
             const float distance = glm::length(delta);
             if (distance >= blastRadius) {
-              return;
+              return false;
             }
             glm::vec3 horizontal = glm::vec3(delta.x, 0.0f, delta.z);
             float horizontalLen = glm::length(horizontal);
@@ -1615,13 +1612,19 @@ int main() {
             entityVel += horizontal * horizontalImpulse;
             entityVel.y += verticalImpulse;
             blastTimer = glm::max(blastTimer, 0.6f + falloff * 0.45f);
+            return true;
           };
 
-          ApplyBlastImpulse(player.position, player.velocity, player.blastTimer);
-          player.onGround = false;
+          const bool playerBlasted = ApplyBlastImpulse(player.position, player.velocity, player.blastTimer);
+          if (playerBlasted) {
+            player.onGround = false;
+            LoseLife(false, true);
+          }
           for (Dog& dog : dogs) {
-            ApplyBlastImpulse(dog.position, dog.velocity, dog.blastTimer);
-            dog.onGround = false;
+            const bool dogBlasted = ApplyBlastImpulse(dog.position, dog.velocity, dog.blastTimer);
+            if (dogBlasted) {
+              dog.onGround = false;
+            }
           }
           bomb.active = false;
         }
