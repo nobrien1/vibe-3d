@@ -239,6 +239,19 @@ struct Platform {
   glm::vec3 tint;
 };
 
+struct CloudPuff {
+  glm::vec3 offset;
+  glm::vec3 scale;
+};
+
+struct CloudCluster {
+  glm::vec3 basePosition;
+  glm::vec2 driftDir;
+  float driftSpeed = 0.0f;
+  float hueOffset = 0.0f;
+  std::vector<CloudPuff> puffs;
+};
+
 struct Cat {
   glm::vec3 position;
   glm::vec3 velocity = glm::vec3(0.0f);
@@ -513,6 +526,39 @@ static GLuint BuildMetalTexture() {
   return tex;
 }
 
+static GLuint BuildCloudTexture() {
+  const int size = 128;
+  std::vector<unsigned char> pixels(size * size * 3);
+  for (int y = 0; y < size; ++y) {
+    for (int x = 0; x < size; ++x) {
+      const float fx = static_cast<float>(x) / static_cast<float>(size - 1);
+      const float fy = static_cast<float>(y) / static_cast<float>(size - 1);
+      const float dx = (fx - 0.5f) * 2.0f;
+      const float dy = (fy - 0.5f) * 2.0f;
+      const float puff = std::exp(-(dx * dx * 1.6f + dy * dy * 3.0f));
+      const float wisps = 0.08f * std::sin(fx * 20.0f) + 0.06f * std::sin((fx + fy) * 16.0f);
+      float shade = 0.72f + puff * 0.24f + wisps;
+      shade = glm::clamp(shade, 0.62f, 1.0f);
+      const int idx = (y * size + x) * 3;
+      pixels[idx + 0] = static_cast<unsigned char>(shade * 245.0f);
+      pixels[idx + 1] = static_cast<unsigned char>(shade * 242.0f);
+      pixels[idx + 2] = static_cast<unsigned char>(shade * 236.0f);
+    }
+  }
+
+  GLuint tex = 0;
+  glGenTextures(1, &tex);
+  glBindTexture(GL_TEXTURE_2D, tex);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, size, size, 0, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
+  glGenerateMipmap(GL_TEXTURE_2D);
+  glBindTexture(GL_TEXTURE_2D, 0);
+  return tex;
+}
+
 int main() {
   if (!glfwInit()) {
     std::cerr << "Failed to initialize GLFW\n";
@@ -633,6 +679,7 @@ int main() {
   const GLuint knifeTexture = BuildMetalTexture();
   const GLuint catTexture = BuildCatTexture();
   const GLuint carTexture = BuildMetalTexture();
+  const GLuint cloudTexture = BuildCloudTexture();
 
   AudioState audio;
   if (ma_engine_init(nullptr, &audio.engine) == MA_SUCCESS) {
@@ -709,6 +756,33 @@ int main() {
     cat.idleAnimTimer = 0.5f + RandomFloat(cat.seed) * 2.0f;
   }
   const glm::vec3 carPosition(18.0f, 0.0f, 16.0f);
+  const std::vector<CloudCluster> clouds = {
+      {glm::vec3(-16.0f, 14.0f, -18.0f), glm::normalize(glm::vec2(1.0f, 0.2f)), 0.55f, 0.05f,
+       {{glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(5.2f, 1.1f, 2.6f)},
+        {glm::vec3(3.2f, 0.25f, 0.5f), glm::vec3(3.6f, 0.95f, 2.1f)},
+        {glm::vec3(-3.0f, 0.2f, -0.6f), glm::vec3(3.4f, 0.9f, 1.9f)},
+        {glm::vec3(1.0f, 0.45f, -1.1f), glm::vec3(2.8f, 0.85f, 1.6f)}}},
+      {glm::vec3(4.0f, 16.5f, -24.0f), glm::normalize(glm::vec2(0.9f, -0.3f)), 0.42f, 0.12f,
+       {{glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(6.0f, 1.25f, 2.9f)},
+        {glm::vec3(3.8f, 0.35f, -0.8f), glm::vec3(4.1f, 1.0f, 2.2f)},
+        {glm::vec3(-3.6f, 0.25f, 0.7f), glm::vec3(4.0f, 1.0f, 2.15f)},
+        {glm::vec3(0.6f, 0.55f, 1.3f), glm::vec3(3.2f, 0.95f, 1.75f)}}},
+      {glm::vec3(20.0f, 15.0f, -10.0f), glm::normalize(glm::vec2(0.8f, 0.55f)), 0.38f, 0.18f,
+       {{glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(5.0f, 1.0f, 2.4f)},
+        {glm::vec3(2.7f, 0.28f, 0.9f), glm::vec3(3.3f, 0.82f, 1.8f)},
+        {glm::vec3(-2.9f, 0.22f, -0.7f), glm::vec3(3.1f, 0.8f, 1.7f)},
+        {glm::vec3(0.2f, 0.45f, -1.2f), glm::vec3(2.6f, 0.75f, 1.45f)}}},
+      {glm::vec3(-24.0f, 13.8f, 10.0f), glm::normalize(glm::vec2(1.0f, -0.45f)), 0.5f, 0.09f,
+       {{glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(4.8f, 0.95f, 2.3f)},
+        {glm::vec3(2.9f, 0.2f, 0.7f), glm::vec3(3.2f, 0.8f, 1.7f)},
+        {glm::vec3(-2.5f, 0.18f, -0.6f), glm::vec3(3.0f, 0.78f, 1.65f)},
+        {glm::vec3(0.1f, 0.42f, 1.15f), glm::vec3(2.4f, 0.72f, 1.35f)}}},
+      {glm::vec3(10.0f, 17.2f, 22.0f), glm::normalize(glm::vec2(0.7f, 0.5f)), 0.34f, 0.22f,
+       {{glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(5.6f, 1.18f, 2.7f)},
+        {glm::vec3(3.4f, 0.32f, -0.9f), glm::vec3(3.9f, 0.96f, 2.1f)},
+        {glm::vec3(-3.2f, 0.26f, 0.8f), glm::vec3(3.7f, 0.92f, 2.0f)},
+        {glm::vec3(0.8f, 0.52f, 1.4f), glm::vec3(3.0f, 0.88f, 1.65f)}}},
+  };
   bool hasWon = false;
   bool winAnnounced = false;
 
@@ -1238,7 +1312,16 @@ int main() {
     const float aspect = width > 0 ? static_cast<float>(width) / static_cast<float>(height) : 1.0f;
     const glm::mat4 proj = glm::perspective(glm::radians(60.0f), aspect, 0.1f, 100.0f);
 
-    glClearColor(0.08f, 0.1f, 0.12f, 1.0f);
+    const float sunsetPhase = 0.5f + 0.5f * std::sin(currentTime * 0.045f + 0.4f);
+    const glm::vec3 skyCool(0.31f, 0.54f, 0.88f);
+    const glm::vec3 skyWarm(0.96f, 0.56f, 0.36f);
+    const glm::vec3 skyPurple(0.62f, 0.45f, 0.76f);
+    const glm::vec3 clearColor = glm::mix(glm::mix(skyCool, skyPurple, 0.45f), skyWarm, 0.3f + sunsetPhase * 0.35f);
+    const glm::vec3 lightColor = glm::mix(glm::vec3(1.0f, 0.9f, 0.78f), glm::vec3(1.0f, 0.62f, 0.44f), sunsetPhase);
+    const glm::vec3 ambientColor = glm::mix(glm::vec3(0.24f, 0.31f, 0.42f), glm::vec3(0.38f, 0.3f, 0.36f), sunsetPhase);
+    const glm::vec3 rimColor = glm::mix(glm::vec3(0.46f, 0.62f, 0.94f), glm::vec3(0.94f, 0.52f, 0.62f), sunsetPhase);
+
+    glClearColor(clearColor.r, clearColor.g, clearColor.b, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     shader.Use();
@@ -1246,9 +1329,9 @@ int main() {
     shader.SetMat4("uProj", proj);
     shader.SetVec3("uViewPos", cameraPosSmooth);
     shader.SetVec3("uLightDir", glm::normalize(glm::vec3(-0.4f, -1.0f, -0.2f)));
-    shader.SetVec3("uLightColor", glm::vec3(1.0f, 0.98f, 0.95f));
-    shader.SetVec3("uAmbient", glm::vec3(0.2f, 0.2f, 0.22f));
-    shader.SetVec3("uRimColor", glm::vec3(0.2f, 0.35f, 0.6f));
+    shader.SetVec3("uLightColor", lightColor);
+    shader.SetVec3("uAmbient", ambientColor);
+    shader.SetVec3("uRimColor", rimColor);
     glUniform1f(glGetUniformLocation(shader.id, "uRimPower"), 2.0f);
     glUniform1f(glGetUniformLocation(shader.id, "uSpecPower"), 32.0f);
     glUniform1f(glGetUniformLocation(shader.id, "uSpecIntensity"), 0.35f);
@@ -1269,6 +1352,27 @@ int main() {
 
     for (const Platform& platform : platforms) {
       DrawCube(platform.position, platform.halfExtents * 2.0f, platform.tint, platformTexture);
+    }
+
+    auto WrapDrift = [](float value, float radius) {
+      const float span = radius * 2.0f;
+      float wrapped = std::fmod(value + radius, span);
+      if (wrapped < 0.0f) {
+        wrapped += span;
+      }
+      return wrapped - radius;
+    };
+
+    for (const CloudCluster& cloud : clouds) {
+      const glm::vec2 drift = cloud.driftDir * cloud.driftSpeed * currentTime;
+      const float wrappedX = WrapDrift(cloud.basePosition.x + drift.x, 54.0f);
+      const float wrappedZ = WrapDrift(cloud.basePosition.z + drift.y, 54.0f);
+      const glm::vec3 cloudCenter(wrappedX, cloud.basePosition.y, wrappedZ);
+      const glm::vec3 cloudTint = glm::mix(glm::vec3(0.9f, 0.84f, 0.8f), glm::vec3(1.0f, 0.96f, 0.92f),
+                                           0.35f + 0.65f * (0.5f + 0.5f * std::sin(currentTime * 0.03f + cloud.hueOffset)));
+      for (const CloudPuff& puff : cloud.puffs) {
+        DrawCube(cloudCenter + puff.offset, puff.scale, cloudTint, cloudTexture);
+      }
     }
 
     int catIndex = 0;
@@ -1648,6 +1752,7 @@ int main() {
   glDeleteTextures(1, &clownSkinTexture);
   glDeleteTextures(1, &clownAccentTexture);
   glDeleteTextures(1, &knifeTexture);
+  glDeleteTextures(1, &cloudTexture);
   if (audio.ready) {
     ma_sound_uninit(&audio.footstep.sound);
     ma_sound_uninit(&audio.jump.sound);
