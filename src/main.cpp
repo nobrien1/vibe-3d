@@ -853,6 +853,11 @@ int main() {
   enum class GameLevel { Level1Cats, Level2Dogs };
   GameLevel currentLevel = GameLevel::Level1Cats;
   bool levelOneAnnounced = false;
+  const float worldGroundTop = platforms[0].position.y + platforms[0].halfExtents.y;
+  const glm::vec3 clownStartPosition(4.0f, worldGroundTop + clown.halfSize, -4.0f);
+  const glm::vec3 mummyStartPosition(-2.0f, worldGroundTop + mummy.halfSize, -10.0f);
+  const std::vector<Cat> initialCats = cats;
+  const std::vector<Dog> initialDogs = dogs;
   const std::vector<CloudCluster> clouds = {
       {glm::vec3(-16.0f, 14.0f, -18.0f), glm::normalize(glm::vec2(1.0f, 0.2f)), 0.55f, 0.05f,
        {{glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(5.2f, 1.1f, 2.6f)},
@@ -908,6 +913,85 @@ int main() {
   float musicVolume = 0.3f;
   float sfxVolume = 1.0f;
   int collectedCount = 0;
+  int livesRemaining = 5;
+  float lifeHitCooldown = 0.0f;
+  bool isDead = false;
+
+  auto ResetLevel1 = [&]() {
+    currentLevel = GameLevel::Level1Cats;
+    levelOneAnnounced = false;
+    hasWon = false;
+    winAnnounced = false;
+    isDead = false;
+    isPaused = false;
+    livesRemaining = 5;
+    lifeHitCooldown = 0.0f;
+    player.position = levelOneSpawn;
+    player.velocity = glm::vec3(0.0f);
+    player.onGround = false;
+    player.blastTimer = 0.0f;
+    clown.position = clownStartPosition;
+    clown.velocity = glm::vec3(0.0f);
+    clown.onGround = true;
+    clown.jumpCooldown = 0.0f;
+    cats = initialCats;
+    dogs = initialDogs;
+    for (Bomb& bomb : bombs) {
+      bomb.active = false;
+    }
+    explosions.clear();
+    collectedCount = 0;
+    glfwSetWindowTitle(window, "Vibe 3D - Level 1: Cats");
+  };
+
+  auto ResetLevel2 = [&]() {
+    currentLevel = GameLevel::Level2Dogs;
+    levelOneAnnounced = true;
+    hasWon = false;
+    winAnnounced = false;
+    isDead = false;
+    isPaused = false;
+    livesRemaining = 5;
+    lifeHitCooldown = 0.0f;
+    player.position = levelTwoSpawn;
+    player.velocity = glm::vec3(0.0f);
+    player.onGround = false;
+    player.blastTimer = 0.0f;
+    clown.velocity = glm::vec3(0.0f);
+    mummy.position = mummyStartPosition;
+    mummy.velocity = glm::vec3(0.0f);
+    mummy.onGround = true;
+    mummyThrowCooldown = 1.25f;
+    cats = initialCats;
+    dogs = initialDogs;
+    for (Bomb& bomb : bombs) {
+      bomb.active = false;
+    }
+    explosions.clear();
+    collectedCount = 0;
+    glfwSetWindowTitle(window, "Vibe 3D - Level 2: Rescue the Dogs");
+  };
+
+  auto LoseLife = [&]() {
+    if (lifeHitCooldown > 0.0f || isDead || hasWon) {
+      return;
+    }
+    livesRemaining = glm::max(0, livesRemaining - 1);
+    lifeHitCooldown = 1.0f;
+    player.blastTimer = 0.0f;
+    if (livesRemaining <= 0) {
+      isDead = true;
+      isPaused = false;
+      player.velocity = glm::vec3(0.0f);
+      clown.velocity = glm::vec3(0.0f);
+      mummy.velocity = glm::vec3(0.0f);
+      return;
+    }
+
+    const glm::vec3 respawn = (currentLevel == GameLevel::Level1Cats) ? levelOneSpawn : levelTwoSpawn;
+    player.position = respawn;
+    player.velocity = glm::vec3(0.0f);
+  };
 
   shader.Use();
   shader.SetInt("uTexture", 0);
@@ -924,7 +1008,7 @@ int main() {
 
     const bool escapeDown = glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
     const bool pDown = glfwGetKey(window, GLFW_KEY_P) == GLFW_PRESS;
-    if ((escapeDown && !wasEscapeDown) || (pDown && !wasPDown)) {
+    if (!isDead && ((escapeDown && !wasEscapeDown) || (pDown && !wasPDown))) {
       isPaused = !isPaused;
     }
     wasEscapeDown = escapeDown;
@@ -972,7 +1056,9 @@ int main() {
       first = true;
     }
 
-    if (!isPaused) {
+    lifeHitCooldown = glm::max(0.0f, lifeHitCooldown - deltaTime);
+
+    if (!isPaused && !isDead) {
       glm::vec3 forwardXZ = glm::normalize(glm::vec3(cameraForward.x, 0.0f, cameraForward.z));
       glm::vec3 rightXZ = glm::normalize(glm::cross(forwardXZ, glm::vec3(0.0f, 1.0f, 0.0f)));
 
@@ -1171,8 +1257,7 @@ int main() {
 
     const float hitDistance = player.halfSize + clown.halfSize + 0.1f;
     if (glm::distance(player.position, clown.position) < hitDistance) {
-      player.position = levelOneSpawn;
-      player.velocity = glm::vec3(0.0f);
+      LoseLife();
       clown.position = glm::vec3(4.0f, enemyGround, -4.0f);
       clown.velocity = glm::vec3(0.0f);
       clown.onGround = true;
@@ -1390,6 +1475,8 @@ int main() {
       if (!levelOneAnnounced && collectedCount >= 10 && glm::distance(player.position, carPositionLevel1) < 2.2f) {
         levelOneAnnounced = true;
         currentLevel = GameLevel::Level2Dogs;
+        livesRemaining = 5;
+        lifeHitCooldown = 0.0f;
         player.position = levelTwoSpawn;
         player.velocity = glm::vec3(0.0f);
         clown.velocity = glm::vec3(0.0f);
@@ -1463,6 +1550,7 @@ int main() {
 
       const float bombGravity = -16.0f;
       const float blastRadius = 10.5f;
+      const float explosionDamageRadius = 3.3f;
       const float groundTop = platforms[0].position.y + platforms[0].halfExtents.y;
 
       for (size_t i = 0; i < explosions.size();) {
@@ -1493,6 +1581,10 @@ int main() {
         }
 
         if (exploded) {
+          if (glm::distance(player.position, bomb.position) < explosionDamageRadius) {
+            LoseLife();
+          }
+
           Explosion explosion;
           explosion.position = bomb.position;
           explosion.age = 0.0f;
@@ -2186,6 +2278,7 @@ int main() {
       ImGui::Text("Level 2 - Dogs");
       ImGui::Text("Dogs: %d / %zu", collectedCount, dogs.size());
     }
+    ImGui::Text("Lives: %d", livesRemaining);
     ImGui::ProgressBar(stamina, ImVec2(180.0f, 0.0f), "Stamina");
     if (currentLevel == GameLevel::Level1Cats) {
       ImGui::Text("Clown distance: %.1fm", glm::distance(player.position, clown.position));
@@ -2250,6 +2343,34 @@ int main() {
       if (ImGui::Button("Reset Player", ImVec2(-1.0f, 0.0f))) {
         player.position = (currentLevel == GameLevel::Level1Cats) ? levelOneSpawn : levelTwoSpawn;
         player.velocity = glm::vec3(0.0f);
+      }
+      if (ImGui::Button("Quit Game", ImVec2(-1.0f, 0.0f))) {
+        glfwSetWindowShouldClose(window, GLFW_TRUE);
+      }
+      ImGui::End();
+    }
+
+    if (isDead) {
+      const ImVec2 viewport = ImGui::GetIO().DisplaySize;
+      ImGui::SetNextWindowPos(ImVec2(viewport.x * 0.5f, viewport.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+      ImGui::SetNextWindowSize(ImVec2(460.0f, 0.0f), ImGuiCond_Always);
+      ImGui::Begin("Death Screen", nullptr,
+                   ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove);
+      ImGui::Text("You Died");
+      ImGui::Separator();
+      if (currentLevel == GameLevel::Level1Cats) {
+        ImGui::Text("The clown caught you too many times.");
+      } else {
+        ImGui::Text("You touched too many explosions.");
+      }
+      ImGui::Text("Level will reset to 5 lives.");
+      ImGui::Separator();
+      if (ImGui::Button("Restart Level", ImVec2(-1.0f, 0.0f))) {
+        if (currentLevel == GameLevel::Level1Cats) {
+          ResetLevel1();
+        } else {
+          ResetLevel2();
+        }
       }
       if (ImGui::Button("Quit Game", ImVec2(-1.0f, 0.0f))) {
         glfwSetWindowShouldClose(window, GLFW_TRUE);
