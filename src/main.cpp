@@ -48,6 +48,7 @@ struct AudioState {
   Sound land;
   Sound ambient;
   Sound chase;
+  Sound explosion;
 };
 
 static float RandomFloat(unsigned int& seed) {
@@ -117,6 +118,21 @@ static std::vector<float> GenerateChase(int sampleRate) {
     const float freq = 160.0f + t * 260.0f;
     const float env = std::exp(-t * 3.5f);
     data[i] = std::sin(2.0f * 3.14159f * freq * t) * env * 0.5f;
+  }
+  return data;
+}
+
+static std::vector<float> GenerateExplosion(int sampleRate) {
+  const int frames = static_cast<int>(sampleRate * 0.55f);
+  std::vector<float> data(frames);
+  unsigned int seed = 31337u;
+  for (int i = 0; i < frames; ++i) {
+    const float t = static_cast<float>(i) / static_cast<float>(sampleRate);
+    const float env = std::exp(-t * 8.2f);
+    const float low = std::sin(2.0f * 3.14159f * (42.0f + t * 35.0f) * t) * 0.7f;
+    const float crack = (RandomFloat(seed) * 2.0f - 1.0f) * std::exp(-t * 16.0f) * 0.6f;
+    const float hiss = (RandomFloat(seed) * 2.0f - 1.0f) * std::exp(-t * 5.0f) * 0.18f;
+    data[i] = (low + crack + hiss) * env;
   }
   return data;
 }
@@ -301,6 +317,13 @@ struct Bomb {
   glm::vec3 velocity{0.0f};
   float timer = 0.0f;
   bool active = false;
+};
+
+struct Explosion {
+  glm::vec3 position{0.0f};
+  float age = 0.0f;
+  float duration = 0.6f;
+  float seed = 0.0f;
 };
 
 static void FramebufferSizeCallback(GLFWwindow* window, int width, int height) {
@@ -716,11 +739,13 @@ int main() {
     CreateSound(audio.engine, audio.land, GenerateLand(sampleRate), false);
     CreateSound(audio.engine, audio.ambient, GenerateAmbient(sampleRate), true);
     CreateSound(audio.engine, audio.chase, GenerateChase(sampleRate), false);
+    CreateSound(audio.engine, audio.explosion, GenerateExplosion(sampleRate), false);
     ma_sound_set_volume(&audio.ambient.sound, 0.3f);
     ma_sound_set_volume(&audio.footstep.sound, 0.45f);
     ma_sound_set_volume(&audio.jump.sound, 0.5f);
     ma_sound_set_volume(&audio.land.sound, 0.5f);
     ma_sound_set_volume(&audio.chase.sound, 0.6f);
+    ma_sound_set_volume(&audio.explosion.sound, 0.72f);
     ma_sound_start(&audio.ambient.sound);
   }
 
@@ -804,6 +829,7 @@ int main() {
       {{-2.0f, 0.35f, 15.0f}, false, 5.9f},
   };
   std::vector<Bomb> bombs(12);
+  std::vector<Explosion> explosions;
   unsigned int dogSeed = 9001u;
   for (Dog& dog : dogs) {
     dog.seed = dogSeed;
@@ -1438,6 +1464,17 @@ int main() {
       const float bombGravity = -16.0f;
       const float blastRadius = 10.5f;
       const float groundTop = platforms[0].position.y + platforms[0].halfExtents.y;
+
+      for (size_t i = 0; i < explosions.size();) {
+        explosions[i].age += deltaTime;
+        if (explosions[i].age >= explosions[i].duration) {
+          explosions[i] = explosions.back();
+          explosions.pop_back();
+        } else {
+          ++i;
+        }
+      }
+
       for (Bomb& bomb : bombs) {
         if (!bomb.active) {
           continue;
@@ -1456,6 +1493,16 @@ int main() {
         }
 
         if (exploded) {
+          Explosion explosion;
+          explosion.position = bomb.position;
+          explosion.age = 0.0f;
+          explosion.duration = 0.72f;
+          explosion.seed = bomb.position.x * 0.17f + bomb.position.z * 0.11f + currentTime * 0.9f;
+          explosions.push_back(explosion);
+          if (audio.ready) {
+            PlaySound(audio.explosion);
+          }
+
           auto ApplyBlastImpulse = [&](glm::vec3& entityPos, glm::vec3& entityVel, float& blastTimer) {
             const glm::vec3 delta = entityPos - bomb.position;
             const float distance = glm::length(delta);
@@ -1929,6 +1976,30 @@ int main() {
         }
         DrawCube(bomb.position, glm::vec3(0.22f, 0.22f, 0.22f), glm::vec3(0.22f, 0.22f, 0.25f), knifeTexture);
       }
+
+      for (const Explosion& explosion : explosions) {
+        const float t = glm::clamp(explosion.age / explosion.duration, 0.0f, 1.0f);
+        const float grow = 0.45f + t * 3.5f;
+        const float fade = 1.0f - t;
+        DrawCube(explosion.position + glm::vec3(0.0f, 0.2f, 0.0f),
+                 glm::vec3(grow * 1.1f, grow * 0.7f, grow * 1.1f),
+                 glm::vec3(1.0f, 0.42f + fade * 0.25f, 0.1f + fade * 0.1f), knifeTexture);
+        DrawCube(explosion.position + glm::vec3(0.0f, 0.25f, 0.0f),
+                 glm::vec3(grow * 0.7f, grow * 0.5f, grow * 0.7f),
+                 glm::vec3(1.0f, 0.84f, 0.38f), cloudTexture);
+
+        for (int spark = 0; spark < 8; ++spark) {
+          const float angle = explosion.seed + static_cast<float>(spark) * 0.785398f;
+          const float ring = (1.0f + static_cast<float>(spark) * 0.11f) * (0.6f + t * 2.8f);
+          const glm::vec3 offset(std::cos(angle) * ring,
+                                 0.2f + (0.35f + 0.06f * static_cast<float>(spark)) * t * 3.1f,
+                                 std::sin(angle) * ring);
+          const float sparkScale = glm::max(0.04f, 0.18f * (1.0f - t));
+          DrawCube(explosion.position + offset,
+                   glm::vec3(sparkScale, sparkScale, sparkScale * 1.5f),
+                   glm::vec3(1.0f, 0.74f, 0.2f), knifeTexture);
+        }
+      }
     }
 
     const glm::vec3 activeCarPos = (currentLevel == GameLevel::Level1Cats) ? carPositionLevel1 : carPositionLevel2;
@@ -2097,6 +2168,7 @@ int main() {
       ma_sound_set_volume(&audio.jump.sound, 0.5f * sfxVolume);
       ma_sound_set_volume(&audio.land.sound, 0.5f * sfxVolume);
       ma_sound_set_volume(&audio.chase.sound, 0.6f * sfxVolume);
+      ma_sound_set_volume(&audio.explosion.sound, 0.72f * sfxVolume);
     }
 
     ImGuiWindowFlags hudFlags = ImGuiWindowFlags_NoDecoration |
@@ -2207,11 +2279,13 @@ int main() {
     ma_sound_uninit(&audio.land.sound);
     ma_sound_uninit(&audio.ambient.sound);
     ma_sound_uninit(&audio.chase.sound);
+    ma_sound_uninit(&audio.explosion.sound);
     ma_audio_buffer_uninit(&audio.footstep.buffer);
     ma_audio_buffer_uninit(&audio.jump.buffer);
     ma_audio_buffer_uninit(&audio.land.buffer);
     ma_audio_buffer_uninit(&audio.ambient.buffer);
     ma_audio_buffer_uninit(&audio.chase.buffer);
+    ma_audio_buffer_uninit(&audio.explosion.buffer);
     ma_engine_uninit(&audio.engine);
   }
   ImGui_ImplOpenGL3_Shutdown();
