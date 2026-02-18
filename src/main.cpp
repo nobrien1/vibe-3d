@@ -49,6 +49,7 @@ struct AudioState {
   Sound ambient;
   Sound chase;
   Sound explosion;
+  Sound hurt;
 };
 
 static float RandomFloat(unsigned int& seed) {
@@ -133,6 +134,20 @@ static std::vector<float> GenerateExplosion(int sampleRate) {
     const float crack = (RandomFloat(seed) * 2.0f - 1.0f) * std::exp(-t * 16.0f) * 0.6f;
     const float hiss = (RandomFloat(seed) * 2.0f - 1.0f) * std::exp(-t * 5.0f) * 0.18f;
     data[i] = (low + crack + hiss) * env;
+  }
+  return data;
+}
+
+static std::vector<float> GenerateHurt(int sampleRate) {
+  const int frames = static_cast<int>(sampleRate * 0.16f);
+  std::vector<float> data(frames);
+  unsigned int seed = 7707u;
+  for (int i = 0; i < frames; ++i) {
+    const float t = static_cast<float>(i) / static_cast<float>(sampleRate);
+    const float env = std::exp(-t * 18.0f);
+    const float tone = std::sin(2.0f * 3.14159f * (290.0f - t * 140.0f) * t) * 0.45f;
+    const float grit = (RandomFloat(seed) * 2.0f - 1.0f) * std::exp(-t * 26.0f) * 0.25f;
+    data[i] = (tone + grit) * env;
   }
   return data;
 }
@@ -239,6 +254,7 @@ struct Player {
   float halfSize = 0.5f;
   bool onGround = false;
   float blastTimer = 0.0f;
+  float hurtTimer = 0.0f;
 };
 
 struct Enemy {
@@ -740,12 +756,14 @@ int main() {
     CreateSound(audio.engine, audio.ambient, GenerateAmbient(sampleRate), true);
     CreateSound(audio.engine, audio.chase, GenerateChase(sampleRate), false);
     CreateSound(audio.engine, audio.explosion, GenerateExplosion(sampleRate), false);
+    CreateSound(audio.engine, audio.hurt, GenerateHurt(sampleRate), false);
     ma_sound_set_volume(&audio.ambient.sound, 0.3f);
     ma_sound_set_volume(&audio.footstep.sound, 0.45f);
     ma_sound_set_volume(&audio.jump.sound, 0.5f);
     ma_sound_set_volume(&audio.land.sound, 0.5f);
     ma_sound_set_volume(&audio.chase.sound, 0.6f);
     ma_sound_set_volume(&audio.explosion.sound, 0.72f);
+    ma_sound_set_volume(&audio.hurt.sound, 0.65f);
     ma_sound_start(&audio.ambient.sound);
   }
 
@@ -978,6 +996,10 @@ int main() {
     }
     livesRemaining = glm::max(0, livesRemaining - 1);
     lifeHitCooldown = 1.0f;
+    player.hurtTimer = 0.5f;
+    if (audio.ready) {
+      PlaySound(audio.hurt);
+    }
     player.blastTimer = 0.0f;
     if (livesRemaining <= 0) {
       isDead = true;
@@ -1059,6 +1081,7 @@ int main() {
     }
 
     lifeHitCooldown = glm::max(0.0f, lifeHitCooldown - deltaTime);
+    player.hurtTimer = glm::max(0.0f, player.hurtTimer - deltaTime);
 
     if (!isPaused && !isDead) {
       glm::vec3 forwardXZ = glm::normalize(glm::vec3(cameraForward.x, 0.0f, cameraForward.z));
@@ -2182,10 +2205,20 @@ int main() {
     if (playerSpeed > 0.05f) {
       playerFacing = std::atan2(player.velocity.x, player.velocity.z);
     }
-    DrawHumanoid(player.position, playerSize,
-           glm::vec3(0.35f, 0.55f, 0.9f),
-           glm::vec3(0.95f, 0.85f, 0.75f),
-           glm::vec3(0.2f, 0.2f, 0.25f),
+        const float hurtNorm = glm::clamp(player.hurtTimer / 0.65f, 0.0f, 1.0f);
+        const float hurtPulse = 0.5f + 0.5f * std::sin(currentTime * 35.0f);
+        const float hurtFlash = hurtNorm * hurtPulse;
+        const float hurtShake = hurtNorm * 0.16f;
+        const glm::vec3 hurtOffset(std::sin(currentTime * 55.0f) * hurtShake,
+               std::abs(std::sin(currentTime * 70.0f)) * hurtShake * 0.35f,
+               std::cos(currentTime * 47.0f) * hurtShake);
+        const glm::vec3 playerBodyTint = glm::mix(glm::vec3(0.35f, 0.55f, 0.9f), glm::vec3(0.95f, 0.22f, 0.22f), hurtFlash);
+        const glm::vec3 playerSkinTint = glm::mix(glm::vec3(0.95f, 0.85f, 0.75f), glm::vec3(1.0f, 0.45f, 0.45f), hurtFlash * 0.75f);
+        const glm::vec3 playerAccentTint = glm::mix(glm::vec3(0.2f, 0.2f, 0.25f), glm::vec3(0.5f, 0.12f, 0.12f), hurtFlash * 0.8f);
+        DrawHumanoid(player.position + hurtOffset, playerSize,
+          playerBodyTint,
+          playerSkinTint,
+          playerAccentTint,
            playerTexture, playerSkinTexture, playerTexture,
                  playerWalkCycle, playerWalk, playerFacing);
 
@@ -2264,6 +2297,7 @@ int main() {
       ma_sound_set_volume(&audio.land.sound, 0.5f * sfxVolume);
       ma_sound_set_volume(&audio.chase.sound, 0.6f * sfxVolume);
       ma_sound_set_volume(&audio.explosion.sound, 0.72f * sfxVolume);
+      ma_sound_set_volume(&audio.hurt.sound, 0.65f * sfxVolume);
     }
 
     ImGuiWindowFlags hudFlags = ImGuiWindowFlags_NoDecoration |
@@ -2381,6 +2415,22 @@ int main() {
       ImGui::End();
     }
 
+    if (player.hurtTimer > 0.0f) {
+      const float flashNorm = glm::clamp(player.hurtTimer / 0.2f, 0.0f, 1.0f);
+      const float flashAlpha = flashNorm * flashNorm * 0.45f;
+      if (flashAlpha > 0.001f) {
+        const ImVec2 viewport = ImGui::GetIO().DisplaySize;
+        ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(viewport, ImGuiCond_Always);
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.95f, 0.08f, 0.08f, flashAlpha));
+        ImGui::Begin("HurtFlash", nullptr,
+                     ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus);
+        ImGui::End();
+        ImGui::PopStyleColor();
+      }
+    }
+
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
@@ -2404,12 +2454,14 @@ int main() {
     ma_sound_uninit(&audio.ambient.sound);
     ma_sound_uninit(&audio.chase.sound);
     ma_sound_uninit(&audio.explosion.sound);
+    ma_sound_uninit(&audio.hurt.sound);
     ma_audio_buffer_uninit(&audio.footstep.buffer);
     ma_audio_buffer_uninit(&audio.jump.buffer);
     ma_audio_buffer_uninit(&audio.land.buffer);
     ma_audio_buffer_uninit(&audio.ambient.buffer);
     ma_audio_buffer_uninit(&audio.chase.buffer);
     ma_audio_buffer_uninit(&audio.explosion.buffer);
+    ma_audio_buffer_uninit(&audio.hurt.buffer);
     ma_engine_uninit(&audio.engine);
   }
   ImGui_ImplOpenGL3_Shutdown();
