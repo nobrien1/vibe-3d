@@ -69,7 +69,7 @@ struct InputBindings {
 };
 
 struct SettingsProfile {
-  float uiScale = 1.15f;
+  float uiScale = 2.8f;
   float mouseSensitivity = 0.005f;
   float musicVolume = 0.3f;
   float sfxVolume = 1.0f;
@@ -1301,7 +1301,15 @@ int main(int argc, char** argv) {
   glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
   glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-  GLFWwindow* window = glfwCreateWindow(1280, 720, "Vibe 3D", nullptr, nullptr);
+  GLFWmonitor* primaryMonitor = glfwGetPrimaryMonitor();
+  const GLFWvidmode* fullscreenMode = primaryMonitor ? glfwGetVideoMode(primaryMonitor) : nullptr;
+  const int windowWidth = fullscreenMode ? fullscreenMode->width : 1280;
+  const int windowHeight = fullscreenMode ? fullscreenMode->height : 720;
+  GLFWwindow* window = glfwCreateWindow(windowWidth,
+                                        windowHeight,
+                                        "Vibe 3D",
+                                        primaryMonitor,
+                                        nullptr);
   if (!window) {
     std::cerr << "Failed to create window\n";
     glfwTerminate();
@@ -3199,7 +3207,8 @@ int main(int argc, char** argv) {
       const bool peerConnected = multiplayer.hasRemote && (currentTime - multiplayer.lastReceiveTime) < 2.0f;
       ImGui::Text("Online: %s", peerConnected ? "Connected" : "Waiting for peer...");
     }
-    ImGui::ProgressBar(stamina, ImVec2(180.0f, 0.0f), "Stamina");
+    const float staminaBarWidth = ImGui::GetContentRegionAvail().x;
+    ImGui::ProgressBar(stamina, ImVec2(staminaBarWidth, 0.0f), "Stamina");
     if (currentLevel == GameLevel::Level1Cats) {
       ImGui::Text("Clown distance: %.1fm", glm::distance(player.position, clown.position));
     } else {
@@ -3297,8 +3306,10 @@ int main(int argc, char** argv) {
 
     if (isPaused) {
       const ImVec2 viewport = ImGui::GetIO().DisplaySize;
+      const float pauseMenuWidth = glm::clamp(viewport.x * 0.72f, 520.0f, 1300.0f);
+      const float pauseMenuHeight = glm::clamp(viewport.y * 0.88f, 420.0f, 1200.0f);
       ImGui::SetNextWindowPos(ImVec2(viewport.x * 0.5f, viewport.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-      ImGui::SetNextWindowSize(ImVec2(420.0f, 0.0f), ImGuiCond_Always);
+      ImGui::SetNextWindowSize(ImVec2(pauseMenuWidth, pauseMenuHeight), ImGuiCond_Always);
       ImGui::Begin("Pause Menu", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
       ImGui::Text("Game Paused");
       ImGui::Separator();
