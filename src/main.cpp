@@ -10,18 +10,256 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <arpa/inet.h>
+#include <cerrno>
+#include <fcntl.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
+
 #include "miniaudio.h"
 
 #ifndef VIBE_SHADER_DIR
 #define VIBE_SHADER_DIR "shaders"
 #endif
+
+#ifdef _WIN32
+using SocketHandle = SOCKET;
+static constexpr SocketHandle kInvalidSocketHandle = INVALID_SOCKET;
+#else
+using SocketHandle = int;
+static constexpr SocketHandle kInvalidSocketHandle = -1;
+#endif
+
+struct MultiplayerConfig {
+  bool enabled = false;
+  int localPort = 7777;
+  std::string peerIp = "127.0.0.1";
+  int peerPort = 7778;
+};
+
+struct MultiplayerPacket {
+  std::uint32_t magic = 0x56425033u;
+  std::uint16_t version = 1u;
+  std::uint16_t level = 1u;
+  std::uint32_t sequence = 0u;
+  std::uint32_t flags = 0u;
+  std::int32_t collected = 0;
+  std::int32_t lives = 0;
+  float pos[3] = {0.0f, 0.0f, 0.0f};
+  float vel[3] = {0.0f, 0.0f, 0.0f};
+  float facing = 0.0f;
+};
+
+struct MultiplayerState {
+  bool active = false;
+  bool requested = false;
+#ifdef _WIN32
+  bool wsaReady = false;
+#endif
+  SocketHandle socket = kInvalidSocketHandle;
+  sockaddr_in peerAddr{};
+  MultiplayerPacket latest{};
+  bool hasRemote = false;
+  float lastReceiveTime = 0.0f;
+  std::uint32_t sendSequence = 0u;
+};
+
+static MultiplayerConfig ParseMultiplayerConfig(int argc, char** argv) {
+  MultiplayerConfig config;
+  for (int i = 1; i < argc; ++i) {
+    const std::string arg = argv[i];
+    if (arg == "--mp") {
+      config.enabled = true;
+    } else if (arg == "--mp-local-port" && (i + 1) < argc) {
+      config.enabled = true;
+      config.localPort = std::max(1, std::atoi(argv[++i]));
+    } else if (arg == "--mp-peer-ip" && (i + 1) < argc) {
+      config.enabled = true;
+      config.peerIp = argv[++i];
+    } else if (arg == "--mp-peer-port" && (i + 1) < argc) {
+      config.enabled = true;
+      config.peerPort = std::max(1, std::atoi(argv[++i]));
+    }
+  }
+  return config;
+}
+
+static bool SetSocketNonBlocking(SocketHandle socket) {
+#ifdef _WIN32
+  u_long mode = 1;
+  return ioctlsocket(socket, FIONBIO, &mode) == 0;
+#else
+  const int flags = fcntl(socket, F_GETFL, 0);
+  if (flags < 0) {
+    return false;
+  }
+  return fcntl(socket, F_SETFL, flags | O_NONBLOCK) == 0;
+#endif
+}
+
+static void CloseSocketHandle(SocketHandle socket) {
+#ifdef _WIN32
+  closesocket(socket);
+#else
+  close(socket);
+#endif
+}
+
+static bool IsWouldBlockError() {
+#ifdef _WIN32
+  const int err = WSAGetLastError();
+  return err == WSAEWOULDBLOCK;
+#else
+  return errno == EWOULDBLOCK || errno == EAGAIN;
+#endif
+}
+
+static bool InitMultiplayer(const MultiplayerConfig& config, MultiplayerState& state) {
+  state.requested = config.enabled;
+  if (!config.enabled) {
+    return true;
+  }
+
+#ifdef _WIN32
+  WSADATA wsaData{};
+  if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+    return false;
+  }
+  state.wsaReady = true;
+#endif
+
+  state.socket = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  if (state.socket == kInvalidSocketHandle) {
+    return false;
+  }
+
+  sockaddr_in localAddr{};
+  localAddr.sin_family = AF_INET;
+  localAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+  localAddr.sin_port = htons(static_cast<std::uint16_t>(config.localPort));
+  if (bind(state.socket, reinterpret_cast<sockaddr*>(&localAddr), sizeof(localAddr)) != 0) {
+    return false;
+  }
+
+  if (!SetSocketNonBlocking(state.socket)) {
+    return false;
+  }
+
+  state.peerAddr = {};
+  state.peerAddr.sin_family = AF_INET;
+  state.peerAddr.sin_port = htons(static_cast<std::uint16_t>(config.peerPort));
+  if (inet_pton(AF_INET, config.peerIp.c_str(), &state.peerAddr.sin_addr) != 1) {
+    return false;
+  }
+
+  state.active = true;
+  state.hasRemote = false;
+  state.sendSequence = 0u;
+  return true;
+}
+
+static void ShutdownMultiplayer(MultiplayerState& state) {
+  if (state.socket != kInvalidSocketHandle) {
+    CloseSocketHandle(state.socket);
+    state.socket = kInvalidSocketHandle;
+  }
+#ifdef _WIN32
+  if (state.wsaReady) {
+    WSACleanup();
+    state.wsaReady = false;
+  }
+#endif
+  state.active = false;
+}
+
+static void PollMultiplayer(MultiplayerState& state, float currentTime) {
+  if (!state.active || state.socket == kInvalidSocketHandle) {
+    return;
+  }
+
+  while (true) {
+    MultiplayerPacket packet{};
+    sockaddr_in from{};
+#ifdef _WIN32
+    int fromLen = sizeof(from);
+#else
+    socklen_t fromLen = sizeof(from);
+#endif
+    const int bytes = recvfrom(state.socket,
+                               reinterpret_cast<char*>(&packet),
+                               static_cast<int>(sizeof(packet)),
+                               0,
+                               reinterpret_cast<sockaddr*>(&from),
+                               &fromLen);
+    if (bytes < 0) {
+      if (IsWouldBlockError()) {
+        break;
+      }
+      break;
+    }
+
+    if (bytes == static_cast<int>(sizeof(MultiplayerPacket)) &&
+        packet.magic == 0x56425033u &&
+        packet.version == 1u) {
+      state.latest = packet;
+      state.hasRemote = true;
+      state.lastReceiveTime = currentTime;
+    }
+  }
+}
+
+static void SendMultiplayerSnapshot(MultiplayerState& state,
+                                    const glm::vec3& position,
+                                    const glm::vec3& velocity,
+                                    float facing,
+                                    std::uint16_t level,
+                                    bool hasWon,
+                                    bool isDead,
+                                    int collected,
+                                    int lives) {
+  if (!state.active || state.socket == kInvalidSocketHandle) {
+    return;
+  }
+
+  MultiplayerPacket packet{};
+  packet.sequence = ++state.sendSequence;
+  packet.level = level;
+  packet.flags = (hasWon ? 0x1u : 0u) | (isDead ? 0x2u : 0u);
+  packet.collected = collected;
+  packet.lives = lives;
+  packet.pos[0] = position.x;
+  packet.pos[1] = position.y;
+  packet.pos[2] = position.z;
+  packet.vel[0] = velocity.x;
+  packet.vel[1] = velocity.y;
+  packet.vel[2] = velocity.z;
+  packet.facing = facing;
+
+  sendto(state.socket,
+         reinterpret_cast<const char*>(&packet),
+         static_cast<int>(sizeof(packet)),
+         0,
+         reinterpret_cast<const sockaddr*>(&state.peerAddr),
+         sizeof(state.peerAddr));
+}
 
 static std::string ReadFile(const std::string& path) {
   std::ifstream file(path, std::ios::in | std::ios::binary);
@@ -624,9 +862,20 @@ static GLuint BuildCloudTexture() {
   return tex;
 }
 
-int main() {
+int main(int argc, char** argv) {
+  const MultiplayerConfig multiplayerConfig = ParseMultiplayerConfig(argc, argv);
+  MultiplayerState multiplayer;
+  if (!InitMultiplayer(multiplayerConfig, multiplayer)) {
+    std::cerr << "Multiplayer init failed. Running in single-player mode.\n";
+    ShutdownMultiplayer(multiplayer);
+  } else if (multiplayer.active) {
+    std::cout << "Multiplayer enabled. Local UDP port " << multiplayerConfig.localPort
+              << ", peer " << multiplayerConfig.peerIp << ":" << multiplayerConfig.peerPort << "\n";
+  }
+
   if (!glfwInit()) {
     std::cerr << "Failed to initialize GLFW\n";
+    ShutdownMultiplayer(multiplayer);
     return 1;
   }
 
@@ -638,6 +887,7 @@ int main() {
   if (!window) {
     std::cerr << "Failed to create window\n";
     glfwTerminate();
+    ShutdownMultiplayer(multiplayer);
     return 1;
   }
 
@@ -648,6 +898,7 @@ int main() {
   if (!gladLoadGL(reinterpret_cast<GLADloadfunc>(glfwGetProcAddress))) {
     std::cerr << "Failed to load OpenGL\n";
     glfwTerminate();
+    ShutdownMultiplayer(multiplayer);
     return 1;
   }
 
@@ -672,6 +923,7 @@ int main() {
   const std::string shaderDir = std::string(VIBE_SHADER_DIR);
   if (!shader.Load(shaderDir + "/standard.vert", shaderDir + "/standard.frag")) {
     glfwTerminate();
+    ShutdownMultiplayer(multiplayer);
     return 1;
   }
 
@@ -916,6 +1168,7 @@ int main() {
   glm::vec3 cameraTargetSmooth(0.0f);
   bool cameraInitialized = false;
   float playerWalkCycle = 0.0f;
+  float remotePlayerWalkCycle = 0.0f;
   float clownWalkCycle = 0.0f;
   bool wasPlayerOnGround = false;
   bool wasClownOnGround = false;
@@ -1774,6 +2027,18 @@ int main() {
     }
     }
 
+    const std::uint16_t localLevel = (currentLevel == GameLevel::Level1Cats) ? 1u : 2u;
+    PollMultiplayer(multiplayer, currentTime);
+    SendMultiplayerSnapshot(multiplayer,
+                player.position,
+                player.velocity,
+                playerFacing,
+                localLevel,
+                hasWon,
+                isDead,
+                collectedCount,
+                livesRemaining);
+
     const glm::vec3 cameraOffset = cameraForward * -cameraDistance + glm::vec3(0.0f, 2.0f, 0.0f);
     const glm::vec3 cameraTarget = player.position + glm::vec3(0.0f, 0.9f, 0.0f);
     const glm::vec3 cameraPosTarget = player.position + cameraOffset;
@@ -2222,6 +2487,25 @@ int main() {
            playerTexture, playerSkinTexture, playerTexture,
                  playerWalkCycle, playerWalk, playerFacing);
 
+    const bool remoteOnline = multiplayer.active && multiplayer.hasRemote &&
+                              (currentTime - multiplayer.lastReceiveTime) < 2.0f;
+    if (remoteOnline && multiplayer.latest.level == localLevel) {
+      const glm::vec3 remotePos(multiplayer.latest.pos[0], multiplayer.latest.pos[1], multiplayer.latest.pos[2]);
+      const glm::vec3 remoteVel(multiplayer.latest.vel[0], multiplayer.latest.vel[1], multiplayer.latest.vel[2]);
+      const float remoteSpeed = glm::length(glm::vec2(remoteVel.x, remoteVel.z));
+      const float remoteWalk = glm::clamp(remoteSpeed / moveSpeed, 0.0f, 1.0f);
+      remotePlayerWalkCycle += remoteWalk * (2.5f + remoteWalk * 6.0f) * deltaTime;
+      const glm::vec3 remoteBodyTint(0.34f, 0.95f, 0.62f);
+      const glm::vec3 remoteSkinTint(0.88f, 0.92f, 0.78f);
+      const glm::vec3 remoteAccentTint(0.12f, 0.34f, 0.2f);
+      DrawHumanoid(remotePos, playerSize,
+                   remoteBodyTint,
+                   remoteSkinTint,
+                   remoteAccentTint,
+                   playerTexture, playerSkinTexture, playerTexture,
+                   remotePlayerWalkCycle, remoteWalk, multiplayer.latest.facing);
+    }
+
     if (currentLevel == GameLevel::Level1Cats) {
       const float clownSize = clown.halfSize * 2.0f;
       const float clownSpeed = glm::length(glm::vec2(clown.velocity.x, clown.velocity.z));
@@ -2316,6 +2600,10 @@ int main() {
       ImGui::Text("Dogs: %d / %zu", collectedCount, dogs.size());
     }
     ImGui::Text("Lives: %d", livesRemaining);
+    if (multiplayer.active) {
+      const bool peerConnected = multiplayer.hasRemote && (currentTime - multiplayer.lastReceiveTime) < 2.0f;
+      ImGui::Text("Online: %s", peerConnected ? "Connected" : "Waiting for peer...");
+    }
     ImGui::ProgressBar(stamina, ImVec2(180.0f, 0.0f), "Stamina");
     if (currentLevel == GameLevel::Level1Cats) {
       ImGui::Text("Clown distance: %.1fm", glm::distance(player.position, clown.position));
@@ -2350,6 +2638,10 @@ int main() {
       ImGui::SetNextWindowBgAlpha(0.45f);
       ImGui::Begin("Debug", nullptr, hudFlags);
       ImGui::Text("Player: (%.2f, %.2f, %.2f)", player.position.x, player.position.y, player.position.z);
+      if (multiplayer.active && multiplayer.hasRemote) {
+        ImGui::Text("Peer:   (%.2f, %.2f, %.2f)",
+                    multiplayer.latest.pos[0], multiplayer.latest.pos[1], multiplayer.latest.pos[2]);
+      }
       if (currentLevel == GameLevel::Level1Cats) {
         ImGui::Text("Clown:  (%.2f, %.2f, %.2f)", clown.position.x, clown.position.y, clown.position.z);
       } else {
@@ -2468,5 +2760,6 @@ int main() {
   ImGui_ImplGlfw_Shutdown();
   ImGui::DestroyContext();
   glfwTerminate();
+  ShutdownMultiplayer(multiplayer);
   return 0;
 }

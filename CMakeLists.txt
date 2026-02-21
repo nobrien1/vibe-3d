@@ -80,6 +80,10 @@ target_link_libraries(vibe3d PRIVATE glfw glad_gl glm imgui)
 target_include_directories(vibe3d PRIVATE ${miniaudio_SOURCE_DIR})
 target_compile_definitions(vibe3d PRIVATE MINIAUDIO_IMPLEMENTATION)
 
+if (WIN32)
+  target_link_libraries(vibe3d PRIVATE ws2_32)
+endif()
+
 if (APPLE)
   target_compile_definitions(vibe3d PRIVATE GL_SILENCE_DEPRECATION)
 endif()
