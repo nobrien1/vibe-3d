@@ -2712,6 +2712,125 @@ int main(int argc, char** argv) {
       }
     }
 
+    // Environment beautification pass: hills, trees, structures, roads, props.
+    const std::vector<glm::vec3> hillCenters = {
+        {-20.0f, -0.2f, -20.0f}, {-10.0f, -0.25f, 18.0f}, {8.0f, -0.3f, -18.0f},
+        {20.0f, -0.2f, 12.0f}, {-22.0f, -0.22f, 4.0f}, {14.0f, -0.2f, 22.0f}};
+    for (std::size_t i = 0; i < hillCenters.size(); ++i) {
+      const float stretch = 4.0f + static_cast<float>(i % 3) * 1.8f;
+      const float depth = 3.5f + static_cast<float>((i + 1) % 3) * 1.7f;
+      DrawCube(hillCenters[i], glm::vec3(stretch, 0.95f, depth), glm::vec3(0.34f, 0.55f, 0.34f), platformTexture);
+      DrawCube(hillCenters[i] + glm::vec3(0.0f, 0.9f, 0.0f),
+               glm::vec3(stretch * 0.72f, 0.5f, depth * 0.72f),
+               glm::vec3(0.42f, 0.66f, 0.4f), platformTexture);
+    }
+
+    auto DrawTree = [&](const glm::vec3& pos, float trunkHeight, float crownScale, const glm::vec3& crownTint) {
+      DrawCube(pos + glm::vec3(0.0f, trunkHeight * 0.5f, 0.0f),
+               glm::vec3(0.22f, trunkHeight * 0.5f, 0.22f),
+               glm::vec3(0.5f, 0.35f, 0.2f), platformTexture);
+      DrawCube(pos + glm::vec3(0.0f, trunkHeight + crownScale * 0.45f, 0.0f),
+               glm::vec3(crownScale, crownScale * 0.6f, crownScale),
+               crownTint, catTexture);
+      DrawCube(pos + glm::vec3(0.0f, trunkHeight + crownScale * 0.9f, 0.0f),
+               glm::vec3(crownScale * 0.72f, crownScale * 0.45f, crownScale * 0.72f),
+               crownTint * glm::vec3(1.06f, 1.05f, 1.06f), catTexture);
+    };
+
+    const std::vector<glm::vec3> pineTrees = {
+        {-19.0f, 0.0f, -13.0f}, {-16.0f, 0.0f, -18.0f}, {-13.0f, 0.0f, -14.0f},
+        {16.0f, 0.0f, -14.0f}, {19.0f, 0.0f, -8.0f}, {21.0f, 0.0f, -13.0f},
+        {-18.0f, 0.0f, 16.0f}, {-21.0f, 0.0f, 10.0f}, {18.0f, 0.0f, 17.0f}};
+    for (std::size_t i = 0; i < pineTrees.size(); ++i) {
+      const float h = 1.7f + 0.35f * static_cast<float>((i * 7) % 3);
+      const float c = 0.8f + 0.18f * static_cast<float>(i % 2);
+      DrawTree(pineTrees[i], h, c, glm::vec3(0.2f, 0.45f, 0.25f));
+      DrawCube(pineTrees[i] + glm::vec3(0.0f, h + c * 1.38f, 0.0f),
+               glm::vec3(c * 0.6f, c * 0.35f, c * 0.6f), glm::vec3(0.18f, 0.38f, 0.22f), catTexture);
+    }
+
+    const std::vector<glm::vec3> blossomTrees = {
+        {-6.0f, 0.0f, 15.0f}, {-2.0f, 0.0f, 18.0f}, {6.0f, 0.0f, 17.0f},
+        {11.0f, 0.0f, 13.0f}, {-10.0f, 0.0f, 13.0f}};
+    for (std::size_t i = 0; i < blossomTrees.size(); ++i) {
+      const glm::vec3 tint = (i % 2 == 0) ? glm::vec3(0.7f, 0.9f, 0.62f) : glm::vec3(0.88f, 0.72f, 0.84f);
+      DrawTree(blossomTrees[i], 1.35f, 0.95f, tint);
+    }
+
+    // Cabins and utility structures.
+    auto DrawCabin = [&](const glm::vec3& base, const glm::vec3& tint) {
+      DrawCube(base + glm::vec3(0.0f, 0.8f, 0.0f), glm::vec3(1.6f, 0.8f, 1.2f), tint, platformTexture);
+      DrawCube(base + glm::vec3(0.0f, 1.6f, 0.0f), glm::vec3(1.9f, 0.25f, 1.35f), glm::vec3(0.34f, 0.24f, 0.18f), platformTexture);
+      DrawCube(base + glm::vec3(0.0f, 0.55f, 1.2f), glm::vec3(0.28f, 0.5f, 0.12f), glm::vec3(0.32f, 0.2f, 0.14f), platformTexture);
+      DrawCube(base + glm::vec3(-0.65f, 0.95f, 1.21f), glm::vec3(0.22f, 0.22f, 0.08f), glm::vec3(0.8f, 0.86f, 0.92f), cloudTexture);
+      DrawCube(base + glm::vec3(0.65f, 0.95f, 1.21f), glm::vec3(0.22f, 0.22f, 0.08f), glm::vec3(0.8f, 0.86f, 0.92f), cloudTexture);
+    };
+    DrawCabin(glm::vec3(-20.0f, 0.0f, 20.0f), glm::vec3(0.62f, 0.46f, 0.34f));
+    DrawCabin(glm::vec3(21.0f, 0.0f, -20.0f), glm::vec3(0.52f, 0.44f, 0.36f));
+
+    // Watchtower landmark.
+    const glm::vec3 towerBase(19.0f, 0.0f, 6.0f);
+    DrawCube(towerBase + glm::vec3(0.0f, 2.2f, 0.0f), glm::vec3(1.0f, 0.25f, 1.0f), glm::vec3(0.45f, 0.34f, 0.2f), platformTexture);
+    DrawCube(towerBase + glm::vec3(0.75f, 1.1f, 0.75f), glm::vec3(0.16f, 1.1f, 0.16f), glm::vec3(0.42f, 0.3f, 0.2f), platformTexture);
+    DrawCube(towerBase + glm::vec3(-0.75f, 1.1f, 0.75f), glm::vec3(0.16f, 1.1f, 0.16f), glm::vec3(0.42f, 0.3f, 0.2f), platformTexture);
+    DrawCube(towerBase + glm::vec3(0.75f, 1.1f, -0.75f), glm::vec3(0.16f, 1.1f, 0.16f), glm::vec3(0.42f, 0.3f, 0.2f), platformTexture);
+    DrawCube(towerBase + glm::vec3(-0.75f, 1.1f, -0.75f), glm::vec3(0.16f, 1.1f, 0.16f), glm::vec3(0.42f, 0.3f, 0.2f), platformTexture);
+    DrawCube(towerBase + glm::vec3(0.0f, 2.9f, 0.0f), glm::vec3(1.15f, 0.2f, 1.15f), glm::vec3(0.33f, 0.26f, 0.18f), platformTexture);
+
+    // Fence lines near key routes.
+    for (int i = -10; i <= 10; ++i) {
+      const float x = static_cast<float>(i) * 1.7f;
+      DrawCube(glm::vec3(x, 0.45f, -21.0f), glm::vec3(0.07f, 0.45f, 0.07f), glm::vec3(0.48f, 0.36f, 0.24f), platformTexture);
+      DrawCube(glm::vec3(x, 0.7f, -21.0f), glm::vec3(0.75f, 0.06f, 0.05f), glm::vec3(0.56f, 0.42f, 0.28f), platformTexture);
+      DrawCube(glm::vec3(x, 0.4f, -21.0f), glm::vec3(0.75f, 0.06f, 0.05f), glm::vec3(0.56f, 0.42f, 0.28f), platformTexture);
+    }
+
+    // Stone ruins and archway.
+    DrawCube(glm::vec3(-21.0f, 0.55f, -2.0f), glm::vec3(0.55f, 0.55f, 0.55f), glm::vec3(0.52f, 0.54f, 0.58f), knifeTexture);
+    DrawCube(glm::vec3(-18.0f, 0.55f, -2.0f), glm::vec3(0.55f, 0.55f, 0.55f), glm::vec3(0.52f, 0.54f, 0.58f), knifeTexture);
+    DrawCube(glm::vec3(-19.5f, 1.15f, -2.0f), glm::vec3(1.65f, 0.24f, 0.55f), glm::vec3(0.56f, 0.57f, 0.61f), knifeTexture);
+    DrawCube(glm::vec3(-16.7f, 0.42f, -4.4f), glm::vec3(0.62f, 0.42f, 0.62f), glm::vec3(0.5f, 0.52f, 0.56f), knifeTexture);
+    DrawCube(glm::vec3(-15.4f, 0.3f, -5.4f), glm::vec3(0.44f, 0.3f, 0.44f), glm::vec3(0.45f, 0.48f, 0.53f), knifeTexture);
+
+    // Dirt-road style path to objectives.
+    const glm::vec3 pathColor(0.48f, 0.38f, 0.27f);
+    for (int i = -8; i <= 10; ++i) {
+      const float t = static_cast<float>(i);
+      DrawCube(glm::vec3(t * 1.8f, -0.42f, 10.0f + std::sin(t * 0.45f) * 1.2f),
+               glm::vec3(0.95f, 0.08f, 1.2f), pathColor, platformTexture);
+    }
+    for (int i = -8; i <= 6; ++i) {
+      const float t = static_cast<float>(i);
+      DrawCube(glm::vec3(-8.0f + t * 1.5f, -0.42f, -10.0f + std::cos(t * 0.38f) * 1.5f),
+               glm::vec3(0.86f, 0.08f, 1.0f), glm::vec3(0.44f, 0.35f, 0.24f), platformTexture);
+    }
+
+    // Bridge/overpass style scenic structures.
+    DrawCube(glm::vec3(6.0f, 1.55f, -12.0f), glm::vec3(3.4f, 0.18f, 1.0f), glm::vec3(0.58f, 0.44f, 0.3f), platformTexture);
+    DrawCube(glm::vec3(3.0f, 0.85f, -12.0f), glm::vec3(0.2f, 0.85f, 0.2f), glm::vec3(0.45f, 0.33f, 0.22f), platformTexture);
+    DrawCube(glm::vec3(9.0f, 0.85f, -12.0f), glm::vec3(0.2f, 0.85f, 0.2f), glm::vec3(0.45f, 0.33f, 0.22f), platformTexture);
+
+    // Flower and shrub patches.
+    const std::vector<glm::vec3> shrubCenters = {
+        {-4.0f, 0.0f, -15.0f}, {2.0f, 0.0f, -14.0f}, {11.0f, 0.0f, -3.0f},
+        {-13.0f, 0.0f, 6.0f}, {-6.0f, 0.0f, 20.0f}, {8.0f, 0.0f, 20.0f}};
+    for (std::size_t i = 0; i < shrubCenters.size(); ++i) {
+      const glm::vec3 blossom = (i % 3 == 0) ? glm::vec3(0.92f, 0.58f, 0.66f)
+                           : ((i % 3 == 1) ? glm::vec3(0.86f, 0.82f, 0.42f) : glm::vec3(0.62f, 0.72f, 0.95f));
+      DrawCube(shrubCenters[i] + glm::vec3(0.0f, 0.22f, 0.0f), glm::vec3(0.5f, 0.22f, 0.5f), glm::vec3(0.29f, 0.56f, 0.28f), catTexture);
+      DrawCube(shrubCenters[i] + glm::vec3(0.0f, 0.46f, 0.0f), glm::vec3(0.2f, 0.12f, 0.2f), blossom, cloudTexture);
+    }
+
+    // Lantern posts for warm focal points.
+    const std::vector<glm::vec3> lanternPosts = {
+        {-2.0f, 0.0f, 8.0f}, {5.0f, 0.0f, 11.0f}, {-9.0f, 0.0f, 12.0f},
+        {15.0f, 0.0f, 2.0f}, {-15.0f, 0.0f, -10.0f}};
+    for (const glm::vec3& post : lanternPosts) {
+      DrawCube(post + glm::vec3(0.0f, 0.9f, 0.0f), glm::vec3(0.08f, 0.9f, 0.08f), glm::vec3(0.34f, 0.27f, 0.2f), platformTexture);
+      DrawCube(post + glm::vec3(0.0f, 1.85f, 0.0f), glm::vec3(0.19f, 0.19f, 0.19f), glm::vec3(1.0f, 0.82f, 0.45f), cloudTexture);
+      DrawCube(post + glm::vec3(0.0f, 1.85f, 0.0f), glm::vec3(0.12f, 0.12f, 0.12f), glm::vec3(1.0f, 0.95f, 0.7f), cloudTexture);
+    }
+
     if (currentLevel == GameLevel::Level1Cats) {
     int catIndex = 0;
     for (const Cat& cat : cats) {

@@ -1,5 +1,31 @@
 # Vibe 3D Roadmap (10 Improvements)
 
+## Environment beautification pass (implemented)
+
+1. Rolling terrain hills and berms around the play space.
+2. Pine tree clusters to establish forested silhouettes.
+3. Broadleaf/blossom trees for color variation.
+4. Small cabins and utility structures to add landmarks.
+5. A raised watchtower to improve skyline readability.
+6. Fence lines and ranch-style boundaries near routes.
+7. Stone ruins/archway pieces for visual storytelling.
+8. Dirt-road style pathing toward major objectives.
+9. Flower and shrub patches to soften flat ground.
+10. Lantern posts along routes for warm focal points.
+
+### Status
+
+- [x] 1. Rolling hills/berms
+- [x] 2. Pine tree clusters
+- [x] 3. Broadleaf/blossom trees
+- [x] 4. Cabins/structures
+- [x] 5. Watchtower landmark
+- [x] 6. Fence boundaries
+- [x] 7. Stone ruins/archway
+- [x] 8. Dirt-road pathing
+- [x] 9. Flower/shrub patches
+- [x] 10. Lantern posts
+
 ## Iteration order
 
 1. Architecture extraction from `main.cpp` into systems (input/simulation/render/audio/network/UI).
