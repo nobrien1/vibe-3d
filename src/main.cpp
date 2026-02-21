@@ -74,6 +74,7 @@ struct SettingsProfile {
   float musicVolume = 0.3f;
   float sfxVolume = 1.0f;
   float cameraDistance = 6.0f;
+  int difficulty = 0;
   bool invertLookY = false;
   bool showDebugHud = false;
   bool showMultiplayerWindow = true;
@@ -387,6 +388,7 @@ static bool LoadSettings(SettingsProfile& settings) {
     else if (key == "musicVolume") settings.musicVolume = ParseFloat(value, settings.musicVolume);
     else if (key == "sfxVolume") settings.sfxVolume = ParseFloat(value, settings.sfxVolume);
     else if (key == "cameraDistance") settings.cameraDistance = ParseFloat(value, settings.cameraDistance);
+    else if (key == "difficulty") settings.difficulty = ParseInt(value, settings.difficulty);
     else if (key == "invertLookY") settings.invertLookY = ParseBool(value, settings.invertLookY);
     else if (key == "showDebugHud") settings.showDebugHud = ParseBool(value, settings.showDebugHud);
     else if (key == "showMultiplayerWindow") settings.showMultiplayerWindow = ParseBool(value, settings.showMultiplayerWindow);
@@ -406,6 +408,7 @@ static bool LoadSettings(SettingsProfile& settings) {
   settings.musicVolume = glm::clamp(settings.musicVolume, 0.0f, 1.0f);
   settings.sfxVolume = glm::clamp(settings.sfxVolume, 0.0f, 1.0f);
   settings.cameraDistance = glm::clamp(settings.cameraDistance, 3.0f, 10.0f);
+  settings.difficulty = glm::clamp(settings.difficulty, 0, 2);
   return true;
 }
 
@@ -419,6 +422,7 @@ static void SaveSettings(const SettingsProfile& settings) {
   file << "musicVolume=" << settings.musicVolume << "\n";
   file << "sfxVolume=" << settings.sfxVolume << "\n";
   file << "cameraDistance=" << settings.cameraDistance << "\n";
+  file << "difficulty=" << settings.difficulty << "\n";
   file << "invertLookY=" << (settings.invertLookY ? 1 : 0) << "\n";
   file << "showDebugHud=" << (settings.showDebugHud ? 1 : 0) << "\n";
   file << "showMultiplayerWindow=" << (settings.showMultiplayerWindow ? 1 : 0) << "\n";
@@ -1617,8 +1621,19 @@ int main(int argc, char** argv) {
   float mouseSensitivity = settings.mouseSensitivity;
   float musicVolume = settings.musicVolume;
   float sfxVolume = settings.sfxVolume;
+  constexpr int kDifficultyCount = 3;
+  const char* kDifficultyLabels[kDifficultyCount] = {"Easy (Demo)", "Normal", "Hard"};
+  const int kDifficultyLives[kDifficultyCount] = {9, 5, 3};
+  const float kDifficultyPlayerSpeedScale[kDifficultyCount] = {1.15f, 1.0f, 0.95f};
+  const float kDifficultyEnemySpeedScale[kDifficultyCount] = {0.72f, 1.0f, 1.18f};
+  const float kDifficultyEnemyCooldownScale[kDifficultyCount] = {1.35f, 1.0f, 0.82f};
+  const float kDifficultyAggroScale[kDifficultyCount] = {0.82f, 1.0f, 1.15f};
+  const float kDifficultyBlastRadiusScale[kDifficultyCount] = {0.72f, 1.0f, 1.2f};
+  const float kDifficultyBlastImpulseScale[kDifficultyCount] = {0.65f, 1.0f, 1.2f};
+  int difficultyIndex = glm::clamp(settings.difficulty, 0, kDifficultyCount - 1);
+  mummyThrowCooldown *= kDifficultyEnemyCooldownScale[difficultyIndex];
   int collectedCount = 0;
-  int livesRemaining = 5;
+  int livesRemaining = kDifficultyLives[difficultyIndex];
   float lifeHitCooldown = 0.0f;
   bool isDead = false;
   bool showMultiplayerWindow = settings.showMultiplayerWindow;
@@ -1644,7 +1659,7 @@ int main(int argc, char** argv) {
     winAnnounced = false;
     isDead = false;
     isPaused = false;
-    livesRemaining = 5;
+    livesRemaining = kDifficultyLives[difficultyIndex];
     lifeHitCooldown = 0.0f;
     player.position = levelOneSpawn;
     player.velocity = glm::vec3(0.0f);
@@ -1673,7 +1688,7 @@ int main(int argc, char** argv) {
     winAnnounced = false;
     isDead = false;
     isPaused = false;
-    livesRemaining = 5;
+    livesRemaining = kDifficultyLives[difficultyIndex];
     lifeHitCooldown = 0.0f;
     player.position = levelTwoSpawn;
     player.velocity = glm::vec3(0.0f);
@@ -1683,7 +1698,7 @@ int main(int argc, char** argv) {
     mummy.position = mummyStartPosition;
     mummy.velocity = glm::vec3(0.0f);
     mummy.onGround = true;
-    mummyThrowCooldown = 1.25f;
+    mummyThrowCooldown = 1.25f * kDifficultyEnemyCooldownScale[difficultyIndex];
     cats = initialCats;
     dogs = initialDogs;
     for (Bomb& bomb : bombs) {
@@ -1800,6 +1815,12 @@ int main(int argc, char** argv) {
     player.hurtTimer = glm::max(0.0f, player.hurtTimer - deltaTime);
 
     if (!isPaused && !isDead) {
+      const float playerSpeedScale = kDifficultyPlayerSpeedScale[difficultyIndex];
+      const float enemySpeedScale = kDifficultyEnemySpeedScale[difficultyIndex];
+      const float enemyCooldownScale = kDifficultyEnemyCooldownScale[difficultyIndex];
+      const float aggroScale = kDifficultyAggroScale[difficultyIndex];
+      const float blastRadiusScale = kDifficultyBlastRadiusScale[difficultyIndex];
+      const float blastImpulseScale = kDifficultyBlastImpulseScale[difficultyIndex];
       glm::vec3 forwardXZ = glm::normalize(glm::vec3(cameraForward.x, 0.0f, cameraForward.z));
       glm::vec3 rightXZ = glm::normalize(glm::cross(forwardXZ, glm::vec3(0.0f, 1.0f, 0.0f)));
 
@@ -1829,7 +1850,7 @@ int main(int argc, char** argv) {
     }
 
     const bool wantsSprint = glfwGetKey(window, bindings.sprint) == GLFW_PRESS && stamina > 0.05f;
-    const float targetSpeed = moveSpeed * (wantsSprint ? sprintMultiplier : 1.0f);
+    const float targetSpeed = moveSpeed * playerSpeedScale * (wantsSprint ? sprintMultiplier : 1.0f);
     const float accel = player.onGround ? accelGround : accelAir;
     const glm::vec3 targetVel = inputDir * targetSpeed;
     player.velocity.x = glm::mix(player.velocity.x, targetVel.x, glm::clamp(accel * deltaTime, 0.0f, 1.0f));
@@ -1898,7 +1919,7 @@ int main(int argc, char** argv) {
     if (currentLevel == GameLevel::Level1Cats) {
     const float enemyGround = platforms[0].position.y + platforms[0].halfExtents.y + clown.halfSize;
     const float playerDistance = glm::length(player.position - clown.position);
-    const float aggroRange = 18.0f;
+    const float aggroRange = 18.0f * aggroScale;
     const bool hasLineOfSight = playerDistance < aggroRange;
     const float levelThreat = glm::clamp(static_cast<float>(collectedCount) / 10.0f, 0.0f, 1.0f);
     glm::vec3 aiTarget = player.position;
@@ -1936,7 +1957,7 @@ int main(int argc, char** argv) {
     const float closeRange = 4.5f;
     const float speedRamp = 1.0f + glm::clamp((closeRange - playerDistance) / closeRange, 0.0f, 1.0f) * 0.6f;
     const float adaptiveSpeedBoost = 1.0f + levelThreat * 0.3f;
-    const float clownChaseSpeed = clown.speed * speedRamp * 1.15f * adaptiveSpeedBoost;
+    const float clownChaseSpeed = clown.speed * enemySpeedScale * speedRamp * 1.15f * adaptiveSpeedBoost;
     if (clownAiState == ClownAiState::Windup) {
       clown.velocity.x = 0.0f;
       clown.velocity.z = 0.0f;
@@ -1945,8 +1966,8 @@ int main(int argc, char** argv) {
       clown.velocity.x = chaseDir.x * clownChaseSpeed;
       clown.velocity.z = chaseDir.z * clownChaseSpeed;
     } else {
-      clown.velocity.x = chaseDir.x * clown.speed * 0.45f;
-      clown.velocity.z = chaseDir.z * clown.speed * 0.45f;
+      clown.velocity.x = chaseDir.x * clown.speed * enemySpeedScale * 0.45f;
+      clown.velocity.z = chaseDir.z * clown.speed * enemySpeedScale * 0.45f;
     }
     clown.velocity.y += gravity * deltaTime;
 
@@ -1960,14 +1981,14 @@ int main(int argc, char** argv) {
     if (!hasWon && clown.onGround && clown.jumpCooldown <= 0.0f && clownAiState != ClownAiState::Windup &&
         playerHeightGap > 0.2f && playerHorizDist < 6.5f) {
       clownAiState = ClownAiState::Windup;
-      clownJumpWindup = 0.18f;
+      clownJumpWindup = 0.18f * enemyCooldownScale;
     }
 
     if (clownAiState == ClownAiState::Windup && clownJumpWindup <= 0.0f && clown.onGround) {
       const float jumpHeight = glm::clamp(playerHeightGap + 0.4f, 0.8f, 2.4f);
       const float jumpVelocity = std::sqrt(2.0f * -gravity * jumpHeight);
       clown.velocity.y = jumpVelocity;
-      clown.jumpCooldown = 0.45f - levelThreat * 0.12f;
+      clown.jumpCooldown = (0.45f - levelThreat * 0.12f) * enemyCooldownScale;
       clownAiState = ClownAiState::Chase;
     }
 
@@ -2246,14 +2267,14 @@ int main(int argc, char** argv) {
       if (!levelOneAnnounced && collectedCount >= 10 && glm::distance(player.position, carPositionLevel1) < 2.2f) {
         levelOneAnnounced = true;
         currentLevel = GameLevel::Level2Dogs;
-        livesRemaining = 5;
+        livesRemaining = kDifficultyLives[difficultyIndex];
         lifeHitCooldown = 0.0f;
         player.position = levelTwoSpawn;
         player.velocity = glm::vec3(0.0f);
         clown.velocity = glm::vec3(0.0f);
         mummy.position = glm::vec3(-2.0f, 0.45f, -10.0f);
         mummy.velocity = glm::vec3(0.0f);
-        mummyThrowCooldown = 1.25f;
+        mummyThrowCooldown = 1.25f * enemyCooldownScale;
         for (Bomb& bomb : bombs) {
           bomb.active = false;
         }
@@ -2273,8 +2294,8 @@ int main(int argc, char** argv) {
       const float desiredDistance = 8.0f;
       const float dist2D = glm::length(glm::vec2(toPlayer.x, toPlayer.z));
       const float approach = glm::clamp((dist2D - desiredDistance) / 6.0f, -1.0f, 1.0f);
-      mummy.velocity.x = moveDir.x * mummy.speed * approach;
-      mummy.velocity.z = moveDir.z * mummy.speed * approach;
+      mummy.velocity.x = moveDir.x * mummy.speed * enemySpeedScale * approach;
+      mummy.velocity.z = moveDir.z * mummy.speed * enemySpeedScale * approach;
       mummy.velocity.y += gravity * deltaTime;
       mummy.position += mummy.velocity * deltaTime;
 
@@ -2302,7 +2323,7 @@ int main(int argc, char** argv) {
       }
 
       mummyThrowCooldown -= deltaTime;
-      if (mummyThrowCooldown <= 0.35f && dist2D < 26.0f) {
+      if (mummyThrowCooldown <= (0.35f * enemyCooldownScale) && dist2D < 26.0f) {
         mummyThrowTelegraph = glm::max(mummyThrowTelegraph, 0.25f);
       }
       mummyThrowTelegraph = glm::max(0.0f, mummyThrowTelegraph - deltaTime);
@@ -2310,24 +2331,24 @@ int main(int argc, char** argv) {
         for (Bomb& bomb : bombs) {
           if (!bomb.active) {
             bomb.active = true;
-            bomb.timer = 3.5f;
+            bomb.timer = 3.5f * enemyCooldownScale;
             bomb.position = mummy.position + glm::vec3(0.0f, mummy.halfSize + 0.6f, 0.0f);
             glm::vec3 throwDir = player.position - bomb.position;
             throwDir.y = 0.0f;
             if (glm::length(throwDir) > 0.001f) {
               throwDir = glm::normalize(throwDir);
             }
-            bomb.velocity = throwDir * (7.5f + glm::clamp(dist2D / 16.0f, 0.0f, 1.2f));
-            bomb.velocity.y = 6.2f;
+            bomb.velocity = throwDir * (7.5f + glm::clamp(dist2D / 16.0f, 0.0f, 1.2f)) * enemySpeedScale;
+            bomb.velocity.y = 6.2f * enemySpeedScale;
             break;
           }
         }
         const float rescuePressure = glm::clamp(static_cast<float>(collectedCount) / 20.0f, 0.0f, 1.0f);
-        mummyThrowCooldown = 1.1f - rescuePressure * 0.25f;
+        mummyThrowCooldown = (1.1f - rescuePressure * 0.25f) * enemyCooldownScale;
       }
 
       const float bombGravity = -16.0f;
-      const float blastRadius = 10.5f;
+      const float blastRadius = 10.5f * blastRadiusScale;
       const float groundTop = platforms[0].position.y + platforms[0].halfExtents.y;
 
       for (size_t i = 0; i < explosions.size();) {
@@ -2383,8 +2404,8 @@ int main(int argc, char** argv) {
             horizontal /= horizontalLen;
             const float falloff = glm::clamp(1.0f - (distance / blastRadius), 0.0f, 1.0f);
             const float shaped = 0.45f + 0.55f * falloff;
-            const float horizontalImpulse = 52.0f * shaped + 18.0f;
-            const float verticalImpulse = 24.0f * shaped + 10.0f;
+            const float horizontalImpulse = (52.0f * shaped + 18.0f) * blastImpulseScale;
+            const float verticalImpulse = (24.0f * shaped + 10.0f) * blastImpulseScale;
             entityVel += horizontal * horizontalImpulse;
             entityVel.y += verticalImpulse;
             blastTimer = glm::max(blastTimer, 0.6f + falloff * 0.45f);
@@ -3197,6 +3218,7 @@ int main(int argc, char** argv) {
       ImGui::Text("Level 2 - Dogs");
       ImGui::Text("Dogs: %d / %zu", collectedCount, dogs.size());
     }
+    ImGui::Text("Difficulty: %s", kDifficultyLabels[difficultyIndex]);
     ImGui::Text("Lives: %d", livesRemaining);
     const float levelElapsed = currentTime - levelStartTime;
     ImGui::Text("Time: %.1fs", levelElapsed);
@@ -3318,6 +3340,9 @@ int main(int argc, char** argv) {
       ImGui::SliderFloat("GUI Scale", &uiScale, 0.85f, 2.8f, "%.2fx");
       ImGui::SliderFloat("Mouse Sensitivity", &mouseSensitivity, 0.0015f, 0.02f, "%.4f");
       ImGui::SliderFloat("Camera Distance", &cameraDistance, 3.0f, 10.0f);
+      if (ImGui::Combo("Difficulty", &difficultyIndex, kDifficultyLabels, kDifficultyCount)) {
+        livesRemaining = glm::min(livesRemaining, kDifficultyLives[difficultyIndex]);
+      }
       ImGui::Checkbox("Invert Look Y", &invertLookY);
       ImGui::Checkbox("High Contrast HUD", &highContrastHud);
       ImGui::Checkbox("Show Debug HUD", &showDebugHud);
@@ -3338,6 +3363,7 @@ int main(int argc, char** argv) {
         settings.musicVolume = musicVolume;
         settings.sfxVolume = sfxVolume;
         settings.cameraDistance = cameraDistance;
+        settings.difficulty = difficultyIndex;
         settings.invertLookY = invertLookY;
         settings.showDebugHud = showDebugHud;
         settings.showMultiplayerWindow = showMultiplayerWindow;
@@ -3414,6 +3440,7 @@ int main(int argc, char** argv) {
   settings.musicVolume = musicVolume;
   settings.sfxVolume = sfxVolume;
   settings.cameraDistance = cameraDistance;
+  settings.difficulty = difficultyIndex;
   settings.invertLookY = invertLookY;
   settings.showDebugHud = showDebugHud;
   settings.showMultiplayerWindow = showMultiplayerWindow;
