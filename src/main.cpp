@@ -13,8 +13,10 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <deque>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -54,6 +56,37 @@ struct MultiplayerConfig {
   std::string peerIp = "127.0.0.1";
   int peerPort = 7778;
 };
+
+struct InputBindings {
+  int forward = GLFW_KEY_W;
+  int backward = GLFW_KEY_S;
+  int left = GLFW_KEY_A;
+  int right = GLFW_KEY_D;
+  int jump = GLFW_KEY_SPACE;
+  int sprint = GLFW_KEY_LEFT_SHIFT;
+  int pauseA = GLFW_KEY_ESCAPE;
+  int pauseB = GLFW_KEY_P;
+};
+
+struct SettingsProfile {
+  float uiScale = 1.15f;
+  float mouseSensitivity = 0.005f;
+  float musicVolume = 0.3f;
+  float sfxVolume = 1.0f;
+  float cameraDistance = 6.0f;
+  bool invertLookY = false;
+  bool showDebugHud = false;
+  bool showMultiplayerWindow = true;
+  bool highContrastHud = false;
+  InputBindings keys;
+};
+
+struct PerformanceHistory {
+  std::deque<float> frameMs;
+  float emaFrameMs = 16.0f;
+};
+
+static constexpr const char* kSettingsFile = "vibe3d_settings.cfg";
 
 struct MultiplayerPacket {
   std::uint32_t magic = 0x56425033u;
@@ -111,8 +144,12 @@ struct MultiplayerState {
   SocketHandle socket = kInvalidSocketHandle;
   sockaddr_in peerAddr{};
   MultiplayerPacket latest{};
+  MultiplayerPacket previous{};
   bool hasRemote = false;
+  bool hasSequence = false;
   float lastReceiveTime = 0.0f;
+  float previousReceiveTime = 0.0f;
+  std::uint32_t lastRemoteSequence = 0u;
   std::uint32_t sendSequence = 0u;
 };
 
@@ -287,10 +324,120 @@ static void PollMultiplayer(MultiplayerState& state, float currentTime) {
     if (bytes == static_cast<int>(sizeof(MultiplayerPacket)) &&
         packet.magic == 0x56425033u &&
         packet.version == 1u) {
+      if (state.hasSequence) {
+        const std::int32_t sequenceDelta = static_cast<std::int32_t>(packet.sequence - state.lastRemoteSequence);
+        if (sequenceDelta <= 0) {
+          continue;
+        }
+      }
+      state.previous = state.latest;
+      state.previousReceiveTime = state.lastReceiveTime;
       state.latest = packet;
       state.hasRemote = true;
+      state.hasSequence = true;
+      state.lastRemoteSequence = packet.sequence;
       state.lastReceiveTime = currentTime;
     }
+  }
+}
+
+static bool LoadSettings(SettingsProfile& settings) {
+  std::ifstream file(kSettingsFile);
+  if (!file) {
+    return false;
+  }
+
+  auto ParseBool = [](const std::string& v, bool fallback) {
+    if (v == "1" || v == "true" || v == "TRUE") {
+      return true;
+    }
+    if (v == "0" || v == "false" || v == "FALSE") {
+      return false;
+    }
+    return fallback;
+  };
+
+  auto ParseFloat = [](const std::string& v, float fallback) {
+    try {
+      return std::stof(v);
+    } catch (...) {
+      return fallback;
+    }
+  };
+
+  auto ParseInt = [](const std::string& v, int fallback) {
+    try {
+      return std::stoi(v);
+    } catch (...) {
+      return fallback;
+    }
+  };
+
+  std::string line;
+  while (std::getline(file, line)) {
+    const std::size_t sep = line.find('=');
+    if (sep == std::string::npos) {
+      continue;
+    }
+    const std::string key = line.substr(0, sep);
+    const std::string value = line.substr(sep + 1);
+
+    if (key == "uiScale") settings.uiScale = ParseFloat(value, settings.uiScale);
+    else if (key == "mouseSensitivity") settings.mouseSensitivity = ParseFloat(value, settings.mouseSensitivity);
+    else if (key == "musicVolume") settings.musicVolume = ParseFloat(value, settings.musicVolume);
+    else if (key == "sfxVolume") settings.sfxVolume = ParseFloat(value, settings.sfxVolume);
+    else if (key == "cameraDistance") settings.cameraDistance = ParseFloat(value, settings.cameraDistance);
+    else if (key == "invertLookY") settings.invertLookY = ParseBool(value, settings.invertLookY);
+    else if (key == "showDebugHud") settings.showDebugHud = ParseBool(value, settings.showDebugHud);
+    else if (key == "showMultiplayerWindow") settings.showMultiplayerWindow = ParseBool(value, settings.showMultiplayerWindow);
+    else if (key == "highContrastHud") settings.highContrastHud = ParseBool(value, settings.highContrastHud);
+    else if (key == "key_forward") settings.keys.forward = ParseInt(value, settings.keys.forward);
+    else if (key == "key_backward") settings.keys.backward = ParseInt(value, settings.keys.backward);
+    else if (key == "key_left") settings.keys.left = ParseInt(value, settings.keys.left);
+    else if (key == "key_right") settings.keys.right = ParseInt(value, settings.keys.right);
+    else if (key == "key_jump") settings.keys.jump = ParseInt(value, settings.keys.jump);
+    else if (key == "key_sprint") settings.keys.sprint = ParseInt(value, settings.keys.sprint);
+    else if (key == "key_pauseA") settings.keys.pauseA = ParseInt(value, settings.keys.pauseA);
+    else if (key == "key_pauseB") settings.keys.pauseB = ParseInt(value, settings.keys.pauseB);
+  }
+
+  settings.uiScale = glm::clamp(settings.uiScale, 0.85f, 2.8f);
+  settings.mouseSensitivity = glm::clamp(settings.mouseSensitivity, 0.0015f, 0.02f);
+  settings.musicVolume = glm::clamp(settings.musicVolume, 0.0f, 1.0f);
+  settings.sfxVolume = glm::clamp(settings.sfxVolume, 0.0f, 1.0f);
+  settings.cameraDistance = glm::clamp(settings.cameraDistance, 3.0f, 10.0f);
+  return true;
+}
+
+static void SaveSettings(const SettingsProfile& settings) {
+  std::ofstream file(kSettingsFile, std::ios::trunc);
+  if (!file) {
+    return;
+  }
+  file << "uiScale=" << settings.uiScale << "\n";
+  file << "mouseSensitivity=" << settings.mouseSensitivity << "\n";
+  file << "musicVolume=" << settings.musicVolume << "\n";
+  file << "sfxVolume=" << settings.sfxVolume << "\n";
+  file << "cameraDistance=" << settings.cameraDistance << "\n";
+  file << "invertLookY=" << (settings.invertLookY ? 1 : 0) << "\n";
+  file << "showDebugHud=" << (settings.showDebugHud ? 1 : 0) << "\n";
+  file << "showMultiplayerWindow=" << (settings.showMultiplayerWindow ? 1 : 0) << "\n";
+  file << "highContrastHud=" << (settings.highContrastHud ? 1 : 0) << "\n";
+  file << "key_forward=" << settings.keys.forward << "\n";
+  file << "key_backward=" << settings.keys.backward << "\n";
+  file << "key_left=" << settings.keys.left << "\n";
+  file << "key_right=" << settings.keys.right << "\n";
+  file << "key_jump=" << settings.keys.jump << "\n";
+  file << "key_sprint=" << settings.keys.sprint << "\n";
+  file << "key_pauseA=" << settings.keys.pauseA << "\n";
+  file << "key_pauseB=" << settings.keys.pauseB << "\n";
+}
+
+static void PushFrameSample(PerformanceHistory& perf, float frameMs) {
+  perf.emaFrameMs = glm::mix(perf.emaFrameMs, frameMs, 0.08f);
+  perf.frameMs.push_back(frameMs);
+  while (perf.frameMs.size() > 240) {
+    perf.frameMs.pop_front();
   }
 }
 
@@ -1133,6 +1280,8 @@ static GLuint BuildCloudTexture() {
 
 int main(int argc, char** argv) {
   MultiplayerConfig multiplayerConfig = ParseMultiplayerConfig(argc, argv);
+  SettingsProfile settings;
+  LoadSettings(settings);
   MultiplayerState multiplayer;
   if (!InitMultiplayer(multiplayerConfig, multiplayer)) {
     std::cerr << "Multiplayer init failed. Running in single-player mode.\n";
@@ -1174,7 +1323,7 @@ int main(int argc, char** argv) {
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
   ImGui::StyleColorsDark();
-  float uiScale = 1.15f;
+  float uiScale = settings.uiScale;
   ImGuiStyle baseImGuiStyle = ImGui::GetStyle();
   auto ApplyUiScale = [&](float scale) {
     ImGuiStyle& style = ImGui::GetStyle();
@@ -1439,25 +1588,41 @@ int main(int argc, char** argv) {
   float playerWalkCycle = 0.0f;
   float remotePlayerWalkCycle = 0.0f;
   float clownWalkCycle = 0.0f;
+  enum class ClownAiState { Patrol, Chase, Windup };
+  ClownAiState clownAiState = ClownAiState::Patrol;
+  float clownJumpWindup = 0.0f;
+  float mummyThrowTelegraph = 0.0f;
+  glm::vec3 remoteRenderPos(0.0f);
+  bool remoteRenderInitialized = false;
   bool wasPlayerOnGround = false;
   bool wasClownOnGround = false;
+  bool wasJumpDown = false;
   float footstepTimer = 0.0f;
   float chaseTimer = 0.0f;
   bool isPaused = false;
   bool wasEscapeDown = false;
   bool wasPDown = false;
-  bool invertLookY = false;
-  bool showDebugHud = false;
+  bool invertLookY = settings.invertLookY;
+  bool showDebugHud = settings.showDebugHud;
+  bool highContrastHud = settings.highContrastHud;
   float lastAppliedUiScale = uiScale;
-  float mouseSensitivity = 0.005f;
-  float musicVolume = 0.3f;
-  float sfxVolume = 1.0f;
+  float mouseSensitivity = settings.mouseSensitivity;
+  float musicVolume = settings.musicVolume;
+  float sfxVolume = settings.sfxVolume;
   int collectedCount = 0;
   int livesRemaining = 5;
   float lifeHitCooldown = 0.0f;
   bool isDead = false;
-  bool showMultiplayerWindow = !multiplayer.active;
+  bool showMultiplayerWindow = settings.showMultiplayerWindow;
   bool multiplayerAuthority = multiplayerConfig.localPort <= multiplayerConfig.peerPort;
+  InputBindings bindings = settings.keys;
+  PerformanceHistory perfHistory;
+  float simulationAccumulator = 0.0f;
+  float levelStartTime = lastTime;
+  std::string levelMedal;
+  if (!multiplayer.active) {
+    showMultiplayerWindow = false;
+  }
   int mpUiLocalPort = multiplayerConfig.localPort;
   int mpUiPeerPort = multiplayerConfig.peerPort;
   char mpUiPeerIp[64] = {};
@@ -1488,6 +1653,8 @@ int main(int argc, char** argv) {
     }
     explosions.clear();
     collectedCount = 0;
+    levelStartTime = static_cast<float>(glfwGetTime());
+    levelMedal.clear();
     glfwSetWindowTitle(window, "Vibe 3D - Level 1: Cats");
   };
 
@@ -1516,6 +1683,8 @@ int main(int argc, char** argv) {
     }
     explosions.clear();
     collectedCount = 0;
+    levelStartTime = static_cast<float>(glfwGetTime());
+    levelMedal.clear();
     glfwSetWindowTitle(window, "Vibe 3D - Level 2: Rescue the Dogs");
   };
 
@@ -1551,16 +1720,26 @@ int main(int argc, char** argv) {
 
   while (!glfwWindowShouldClose(window)) {
     const float currentTime = static_cast<float>(glfwGetTime());
-    const float deltaTime = currentTime - lastTime;
+    const float rawDeltaTime = glm::max(0.0f, currentTime - lastTime);
+    const float clampedDeltaTime = glm::clamp(rawDeltaTime, 0.0f, 0.05f);
     lastTime = currentTime;
+    PushFrameSample(perfHistory, rawDeltaTime * 1000.0f);
+    simulationAccumulator += clampedDeltaTime;
+    constexpr float kFixedStep = 1.0f / 120.0f;
+    int simSteps = 0;
+    while (simulationAccumulator >= kFixedStep && simSteps < 4) {
+      simulationAccumulator -= kFixedStep;
+      ++simSteps;
+    }
+    const float deltaTime = (simSteps > 0) ? (kFixedStep * static_cast<float>(simSteps)) : clampedDeltaTime;
 
     glfwPollEvents();
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
-    const bool escapeDown = glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
-    const bool pDown = glfwGetKey(window, GLFW_KEY_P) == GLFW_PRESS;
+    const bool escapeDown = glfwGetKey(window, bindings.pauseA) == GLFW_PRESS;
+    const bool pDown = glfwGetKey(window, bindings.pauseB) == GLFW_PRESS;
     if (!isDead && ((escapeDown && !wasEscapeDown) || (pDown && !wasPDown))) {
       isPaused = !isPaused;
     }
@@ -1617,16 +1796,16 @@ int main(int argc, char** argv) {
       glm::vec3 rightXZ = glm::normalize(glm::cross(forwardXZ, glm::vec3(0.0f, 1.0f, 0.0f)));
 
     glm::vec3 inputDir(0.0f);
-    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
+    if (glfwGetKey(window, bindings.forward) == GLFW_PRESS) {
       inputDir += forwardXZ;
     }
-    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
+    if (glfwGetKey(window, bindings.backward) == GLFW_PRESS) {
       inputDir -= forwardXZ;
     }
-    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
+    if (glfwGetKey(window, bindings.right) == GLFW_PRESS) {
       inputDir += rightXZ;
     }
-    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
+    if (glfwGetKey(window, bindings.left) == GLFW_PRESS) {
       inputDir -= rightXZ;
     }
     if (glm::length(inputDir) > 0.001f) {
@@ -1641,7 +1820,7 @@ int main(int argc, char** argv) {
       inputDir = glm::vec3(0.0f);
     }
 
-    const bool wantsSprint = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS && stamina > 0.05f;
+    const bool wantsSprint = glfwGetKey(window, bindings.sprint) == GLFW_PRESS && stamina > 0.05f;
     const float targetSpeed = moveSpeed * (wantsSprint ? sprintMultiplier : 1.0f);
     const float accel = player.onGround ? accelGround : accelAir;
     const glm::vec3 targetVel = inputDir * targetSpeed;
@@ -1655,7 +1834,8 @@ int main(int argc, char** argv) {
       stamina = glm::min(1.0f, stamina + deltaTime * 0.35f);
     }
 
-    if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
+    const bool jumpDown = glfwGetKey(window, bindings.jump) == GLFW_PRESS;
+    if (jumpDown) {
       jumpBufferTimer = jumpBufferMax;
     }
 
@@ -1702,12 +1882,24 @@ int main(int argc, char** argv) {
       }
     }
 
+    if (!jumpDown && wasJumpDown && player.velocity.y > 0.0f) {
+      player.velocity.y *= 0.52f;
+    }
+    wasJumpDown = jumpDown;
+
     if (currentLevel == GameLevel::Level1Cats) {
     const float enemyGround = platforms[0].position.y + platforms[0].halfExtents.y + clown.halfSize;
     const float playerDistance = glm::length(player.position - clown.position);
     const float aggroRange = 18.0f;
     const bool hasLineOfSight = playerDistance < aggroRange;
+    const float levelThreat = glm::clamp(static_cast<float>(collectedCount) / 10.0f, 0.0f, 1.0f);
     glm::vec3 aiTarget = player.position;
+
+    if (hasLineOfSight) {
+      clownAiState = ClownAiState::Chase;
+    } else if (clownAiState != ClownAiState::Windup) {
+      clownAiState = ClownAiState::Patrol;
+    }
 
     if (hasLineOfSight && player.position.y > clown.position.y + 0.6f) {
       float bestScore = 1e9f;
@@ -1735,9 +1927,19 @@ int main(int argc, char** argv) {
 
     const float closeRange = 4.5f;
     const float speedRamp = 1.0f + glm::clamp((closeRange - playerDistance) / closeRange, 0.0f, 1.0f) * 0.6f;
-    const float clownChaseSpeed = clown.speed * speedRamp * 1.15f;
-    clown.velocity.x = chaseDir.x * clownChaseSpeed;
-    clown.velocity.z = chaseDir.z * clownChaseSpeed;
+    const float adaptiveSpeedBoost = 1.0f + levelThreat * 0.3f;
+    const float clownChaseSpeed = clown.speed * speedRamp * 1.15f * adaptiveSpeedBoost;
+    if (clownAiState == ClownAiState::Windup) {
+      clown.velocity.x = 0.0f;
+      clown.velocity.z = 0.0f;
+      clownJumpWindup = glm::max(0.0f, clownJumpWindup - deltaTime);
+    } else if (clownAiState == ClownAiState::Chase) {
+      clown.velocity.x = chaseDir.x * clownChaseSpeed;
+      clown.velocity.z = chaseDir.z * clownChaseSpeed;
+    } else {
+      clown.velocity.x = chaseDir.x * clown.speed * 0.45f;
+      clown.velocity.z = chaseDir.z * clown.speed * 0.45f;
+    }
     clown.velocity.y += gravity * deltaTime;
 
     if (clown.jumpCooldown > 0.0f) {
@@ -1747,11 +1949,18 @@ int main(int argc, char** argv) {
     const float playerHeightGap = player.position.y - clown.position.y;
     const float playerHorizDist = glm::length(glm::vec2(player.position.x - clown.position.x,
                                                        player.position.z - clown.position.z));
-    if (!hasWon && clown.onGround && clown.jumpCooldown <= 0.0f && playerHeightGap > 0.2f && playerHorizDist < 6.5f) {
+    if (!hasWon && clown.onGround && clown.jumpCooldown <= 0.0f && clownAiState != ClownAiState::Windup &&
+        playerHeightGap > 0.2f && playerHorizDist < 6.5f) {
+      clownAiState = ClownAiState::Windup;
+      clownJumpWindup = 0.18f;
+    }
+
+    if (clownAiState == ClownAiState::Windup && clownJumpWindup <= 0.0f && clown.onGround) {
       const float jumpHeight = glm::clamp(playerHeightGap + 0.4f, 0.8f, 2.4f);
       const float jumpVelocity = std::sqrt(2.0f * -gravity * jumpHeight);
       clown.velocity.y = jumpVelocity;
-      clown.jumpCooldown = 0.45f;
+      clown.jumpCooldown = 0.45f - levelThreat * 0.12f;
+      clownAiState = ClownAiState::Chase;
     }
 
     if (audio.ready) {
@@ -2040,6 +2249,8 @@ int main(int argc, char** argv) {
         for (Bomb& bomb : bombs) {
           bomb.active = false;
         }
+        levelStartTime = currentTime;
+        levelMedal.clear();
         glfwSetWindowTitle(window, "Vibe 3D - Level 2: Rescue the Dogs");
         std::cout << "Level 2 unlocked! Collect 20 dogs and escape the mummy.\n";
       }
@@ -2083,6 +2294,10 @@ int main(int argc, char** argv) {
       }
 
       mummyThrowCooldown -= deltaTime;
+      if (mummyThrowCooldown <= 0.35f && dist2D < 26.0f) {
+        mummyThrowTelegraph = glm::max(mummyThrowTelegraph, 0.25f);
+      }
+      mummyThrowTelegraph = glm::max(0.0f, mummyThrowTelegraph - deltaTime);
       if (mummyThrowCooldown <= 0.0f && dist2D < 26.0f) {
         for (Bomb& bomb : bombs) {
           if (!bomb.active) {
@@ -2099,7 +2314,8 @@ int main(int argc, char** argv) {
             break;
           }
         }
-        mummyThrowCooldown = 1.1f;
+        const float rescuePressure = glm::clamp(static_cast<float>(collectedCount) / 20.0f, 0.0f, 1.0f);
+        mummyThrowCooldown = 1.1f - rescuePressure * 0.25f;
       }
 
       const float bombGravity = -16.0f;
@@ -2296,8 +2512,16 @@ int main(int argc, char** argv) {
         hasWon = true;
         if (!winAnnounced) {
           winAnnounced = true;
+          const float clearTime = currentTime - levelStartTime;
+          if (clearTime <= 100.0f) {
+            levelMedal = "Gold";
+          } else if (clearTime <= 150.0f) {
+            levelMedal = "Silver";
+          } else {
+            levelMedal = "Bronze";
+          }
           glfwSetWindowTitle(window, "Vibe 3D - You Win!");
-          std::cout << "You rescued 20 dogs and escaped the mummy!\n";
+          std::cout << "You rescued 20 dogs and escaped the mummy! Medal: " << levelMedal << "\n";
         }
       }
     }
@@ -2827,20 +3051,29 @@ int main(int argc, char** argv) {
     const bool remoteOnline = multiplayer.active && multiplayer.hasRemote &&
                               (currentTime - multiplayer.lastReceiveTime) < 2.0f;
     if (remoteOnline && multiplayer.latest.level == localLevel) {
-      const glm::vec3 remotePos(multiplayer.latest.pos[0], multiplayer.latest.pos[1], multiplayer.latest.pos[2]);
       const glm::vec3 remoteVel(multiplayer.latest.vel[0], multiplayer.latest.vel[1], multiplayer.latest.vel[2]);
+      const float extrapolation = glm::clamp(currentTime - multiplayer.lastReceiveTime, 0.0f, 0.12f);
+      const glm::vec3 remoteTarget(multiplayer.latest.pos[0], multiplayer.latest.pos[1], multiplayer.latest.pos[2]);
+      const glm::vec3 remotePos = remoteTarget + remoteVel * extrapolation;
+      if (!remoteRenderInitialized) {
+        remoteRenderPos = remotePos;
+        remoteRenderInitialized = true;
+      }
+      remoteRenderPos = glm::mix(remoteRenderPos, remotePos, glm::clamp(deltaTime * 12.0f, 0.0f, 1.0f));
       const float remoteSpeed = glm::length(glm::vec2(remoteVel.x, remoteVel.z));
       const float remoteWalk = glm::clamp(remoteSpeed / moveSpeed, 0.0f, 1.0f);
       remotePlayerWalkCycle += remoteWalk * (2.5f + remoteWalk * 6.0f) * deltaTime;
       const glm::vec3 remoteBodyTint(0.34f, 0.95f, 0.62f);
       const glm::vec3 remoteSkinTint(0.88f, 0.92f, 0.78f);
       const glm::vec3 remoteAccentTint(0.12f, 0.34f, 0.2f);
-      DrawHumanoid(remotePos, playerSize,
+      DrawHumanoid(remoteRenderPos, playerSize,
                    remoteBodyTint,
                    remoteSkinTint,
                    remoteAccentTint,
                    playerTexture, playerSkinTexture, playerTexture,
                    remotePlayerWalkCycle, remoteWalk, multiplayer.latest.facing);
+    } else {
+      remoteRenderInitialized = false;
     }
 
     if (currentLevel == GameLevel::Level1Cats) {
@@ -2857,6 +3090,13 @@ int main(int argc, char** argv) {
              glm::vec3(0.2f, 0.2f, 0.2f),
              clownTexture, clownSkinTexture, clownAccentTexture,
                    clownWalkCycle, clownWalk, clownFacing);
+
+      if (clownAiState == ClownAiState::Windup) {
+        const float pulse = 0.65f + 0.35f * std::sin(currentTime * 25.0f);
+        DrawCube(clown.position + glm::vec3(0.0f, clownSize * 1.75f, 0.0f),
+             glm::vec3(0.18f, 0.18f, 0.18f),
+             glm::vec3(1.0f, 0.2f + pulse * 0.5f, 0.2f), knifeTexture);
+      }
 
       const float clownSwing = std::sin(clownWalkCycle) * clownWalk;
       const float clownArmRot = -clownSwing * 1.1f;
@@ -2897,6 +3137,14 @@ int main(int argc, char** argv) {
              platformTexture, playerSkinTexture, platformTexture,
                    mummyWalkCycle, mummyWalk, mummyFacing);
 
+      if (mummyThrowTelegraph > 0.0f) {
+        const float t = glm::clamp(mummyThrowTelegraph / 0.25f, 0.0f, 1.0f);
+        const float ring = 0.25f + (1.0f - t) * 0.5f;
+        DrawCube(mummy.position + glm::vec3(0.0f, mummySize * 1.6f, 0.0f),
+             glm::vec3(ring, 0.08f, ring),
+             glm::vec3(1.0f, 0.68f, 0.24f), cloudTexture);
+      }
+
       glm::mat4 bombHand(1.0f);
       bombHand = glm::translate(bombHand, mummy.position);
       bombHand = glm::rotate(bombHand, mummyFacing, glm::vec3(0.0f, 1.0f, 0.0f));
@@ -2912,11 +3160,16 @@ int main(int argc, char** argv) {
     glBindVertexArray(0);
 
     if (audio.ready) {
-      ma_sound_set_volume(&audio.ambient.sound, musicVolume);
+      const float threatDistance = (currentLevel == GameLevel::Level1Cats)
+                                       ? glm::distance(player.position, clown.position)
+                                       : glm::distance(player.position, mummy.position);
+      const float threatNorm = 1.0f - glm::clamp(threatDistance / 12.0f, 0.0f, 1.0f);
+      const float dangerDuck = (livesRemaining <= 1) ? 0.78f : 1.0f;
+      ma_sound_set_volume(&audio.ambient.sound, musicVolume * dangerDuck);
       ma_sound_set_volume(&audio.footstep.sound, 0.45f * sfxVolume);
       ma_sound_set_volume(&audio.jump.sound, 0.5f * sfxVolume);
       ma_sound_set_volume(&audio.land.sound, 0.5f * sfxVolume);
-      ma_sound_set_volume(&audio.chase.sound, 0.6f * sfxVolume);
+      ma_sound_set_volume(&audio.chase.sound, (0.28f + threatNorm * 0.6f) * sfxVolume);
       ma_sound_set_volume(&audio.explosion.sound, 0.72f * sfxVolume);
       ma_sound_set_volume(&audio.hurt.sound, 0.65f * sfxVolume);
     }
@@ -2927,7 +3180,7 @@ int main(int argc, char** argv) {
                                 ImGuiWindowFlags_NoFocusOnAppearing |
                                 ImGuiWindowFlags_NoNav;
     ImGui::SetNextWindowPos(ImVec2(12.0f, 12.0f), ImGuiCond_Always);
-    ImGui::SetNextWindowBgAlpha(0.45f);
+    ImGui::SetNextWindowBgAlpha(highContrastHud ? 0.7f : 0.45f);
     ImGui::Begin("HUD", nullptr, hudFlags);
     if (currentLevel == GameLevel::Level1Cats) {
       ImGui::Text("Level 1 - Cats");
@@ -2937,6 +3190,11 @@ int main(int argc, char** argv) {
       ImGui::Text("Dogs: %d / %zu", collectedCount, dogs.size());
     }
     ImGui::Text("Lives: %d", livesRemaining);
+    const float levelElapsed = currentTime - levelStartTime;
+    ImGui::Text("Time: %.1fs", levelElapsed);
+    if (!levelMedal.empty()) {
+      ImGui::Text("Medal: %s", levelMedal.c_str());
+    }
     if (multiplayer.active) {
       const bool peerConnected = multiplayer.hasRemote && (currentTime - multiplayer.lastReceiveTime) < 2.0f;
       ImGui::Text("Online: %s", peerConnected ? "Connected" : "Waiting for peer...");
@@ -3016,7 +3274,7 @@ int main(int argc, char** argv) {
 
     if (showDebugHud) {
       ImGui::SetNextWindowPos(ImVec2(12.0f, 170.0f), ImGuiCond_Always);
-      ImGui::SetNextWindowBgAlpha(0.45f);
+      ImGui::SetNextWindowBgAlpha(highContrastHud ? 0.72f : 0.45f);
       ImGui::Begin("Debug", nullptr, hudFlags);
       ImGui::Text("Player: (%.2f, %.2f, %.2f)", player.position.x, player.position.y, player.position.z);
       if (multiplayer.active && multiplayer.hasRemote) {
@@ -3029,6 +3287,11 @@ int main(int argc, char** argv) {
         ImGui::Text("Mummy:  (%.2f, %.2f, %.2f)", mummy.position.x, mummy.position.y, mummy.position.z);
       }
       ImGui::Text("Camera yaw/pitch: %.2f / %.2f", yaw, pitch);
+      ImGui::Text("Frame: %.2f ms (%.1f FPS)", perfHistory.emaFrameMs, 1000.0f / glm::max(0.001f, perfHistory.emaFrameMs));
+      if (!perfHistory.frameMs.empty()) {
+        std::vector<float> frameData(perfHistory.frameMs.begin(), perfHistory.frameMs.end());
+        ImGui::PlotLines("Frame Time (ms)", frameData.data(), static_cast<int>(frameData.size()), 0, nullptr, 0.0f, 40.0f, ImVec2(220.0f, 60.0f));
+      }
       ImGui::End();
     }
 
@@ -3045,8 +3308,32 @@ int main(int argc, char** argv) {
       ImGui::SliderFloat("Mouse Sensitivity", &mouseSensitivity, 0.0015f, 0.02f, "%.4f");
       ImGui::SliderFloat("Camera Distance", &cameraDistance, 3.0f, 10.0f);
       ImGui::Checkbox("Invert Look Y", &invertLookY);
+      ImGui::Checkbox("High Contrast HUD", &highContrastHud);
       ImGui::Checkbox("Show Debug HUD", &showDebugHud);
       ImGui::Checkbox("Show Multiplayer Window", &showMultiplayerWindow);
+      ImGui::Separator();
+      ImGui::Text("Keybinds (GLFW key codes)");
+      ImGui::InputInt("Forward", &bindings.forward);
+      ImGui::InputInt("Backward", &bindings.backward);
+      ImGui::InputInt("Left", &bindings.left);
+      ImGui::InputInt("Right", &bindings.right);
+      ImGui::InputInt("Jump", &bindings.jump);
+      ImGui::InputInt("Sprint", &bindings.sprint);
+      ImGui::InputInt("Pause Key 1", &bindings.pauseA);
+      ImGui::InputInt("Pause Key 2", &bindings.pauseB);
+      if (ImGui::Button("Save Settings", ImVec2(-1.0f, 0.0f))) {
+        settings.uiScale = uiScale;
+        settings.mouseSensitivity = mouseSensitivity;
+        settings.musicVolume = musicVolume;
+        settings.sfxVolume = sfxVolume;
+        settings.cameraDistance = cameraDistance;
+        settings.invertLookY = invertLookY;
+        settings.showDebugHud = showDebugHud;
+        settings.showMultiplayerWindow = showMultiplayerWindow;
+        settings.highContrastHud = highContrastHud;
+        settings.keys = bindings;
+        SaveSettings(settings);
+      }
       ImGui::Separator();
       if (ImGui::Button("Resume", ImVec2(-1.0f, 0.0f))) {
         isPaused = false;
@@ -3110,6 +3397,18 @@ int main(int argc, char** argv) {
 
     glfwSwapBuffers(window);
   }
+
+  settings.uiScale = uiScale;
+  settings.mouseSensitivity = mouseSensitivity;
+  settings.musicVolume = musicVolume;
+  settings.sfxVolume = sfxVolume;
+  settings.cameraDistance = cameraDistance;
+  settings.invertLookY = invertLookY;
+  settings.showDebugHud = showDebugHud;
+  settings.showMultiplayerWindow = showMultiplayerWindow;
+  settings.highContrastHud = highContrastHud;
+  settings.keys = bindings;
+  SaveSettings(settings);
 
   glDeleteVertexArrays(1, &vao);
   glDeleteBuffers(1, &vbo);

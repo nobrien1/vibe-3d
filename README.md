@@ -12,7 +12,21 @@ Minimal 3D platformer demo in C++ using OpenGL, GLFW, GLAD, and GLM.
 - Space: Jump
 - Hold right mouse button: Orbit camera
 - Esc or P: Pause/Resume
-- Pause menu: Adjust audio/camera settings, toggle debug HUD, reset player, quit
+- Pause menu: Adjust audio/camera/settings, remap keybinds (GLFW codes), toggle accessibility/debug, reset player, quit
+
+## New Gameplay/Tech Improvements (Iteration)
+
+- Semi-fixed simulation step for more stable gameplay timing.
+- Saved profile file (`vibe3d_settings.cfg`) for UI/audio/camera/options + keybinds.
+- Movement polish with jump-cut behavior (short-hop on jump release).
+- Enemy telegraphs and stateful behavior (clown windup jump, mummy throw warning).
+- Timed progression tracking with end-of-run medal (Gold/Silver/Bronze).
+- Multiplayer render smoothing with sequence filtering and extrapolated interpolation.
+- Debug performance graph (frame-time plot + EMA FPS readout).
+- Contextual audio mix (threat-based chase volume and low-life ambient ducking).
+- Accessibility toggle for higher-contrast HUD.
+
+Detailed implementation roadmap is tracked in `ROADMAP.md`.
 
 ## Progression
 
