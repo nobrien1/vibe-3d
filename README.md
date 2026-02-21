@@ -1,5 +1,9 @@
 # Vibe 3D
 
+> ### **This application has been made completely with "AI."**
+>
+> **This project was purely made as an experiement to see what "AI" in early 2026 is capable of. Please do not rely on any "AI" for sensitive code or handling user data in a live application.**
+
 Minimal 3D platformer demo in C++ using OpenGL, GLFW, GLAD, and GLM.
 
 ## Controls
