@@ -1770,6 +1770,12 @@ int main(int argc, char** argv) {
   std::vector<CollectSprite> collectSprites;
   float swordDashTimer = 0.0f;
   float swordDashCurveTimer = 0.0f;
+  float boomerangUseAnimTimer = 0.0f;
+  float shotgunUseAnimTimer = 0.0f;
+  float swordUseAnimTimer = 0.0f;
+  float remoteBoomerangUseAnimTimer = 0.0f;
+  float remoteShotgunUseAnimTimer = 0.0f;
+  float remoteSwordUseAnimTimer = 0.0f;
   glm::vec3 swordDashDir(0.0f);
   bool swordDashHit = false;
   bool clownAlive = true;
@@ -1902,6 +1908,12 @@ int main(int argc, char** argv) {
     boomerangProjectile = {};
     swordDashTimer = 0.0f;
     swordDashCurveTimer = 0.0f;
+    boomerangUseAnimTimer = 0.0f;
+    shotgunUseAnimTimer = 0.0f;
+    swordUseAnimTimer = 0.0f;
+    remoteBoomerangUseAnimTimer = 0.0f;
+    remoteShotgunUseAnimTimer = 0.0f;
+    remoteSwordUseAnimTimer = 0.0f;
     swordDashHit = false;
     clownAlive = true;
     mummyAlive = true;
@@ -1952,6 +1964,12 @@ int main(int argc, char** argv) {
     boomerangProjectile = {};
     swordDashTimer = 0.0f;
     swordDashCurveTimer = 0.0f;
+    boomerangUseAnimTimer = 0.0f;
+    shotgunUseAnimTimer = 0.0f;
+    swordUseAnimTimer = 0.0f;
+    remoteBoomerangUseAnimTimer = 0.0f;
+    remoteShotgunUseAnimTimer = 0.0f;
+    remoteSwordUseAnimTimer = 0.0f;
     swordDashHit = false;
     clownAlive = true;
     mummyAlive = true;
@@ -2075,6 +2093,12 @@ int main(int argc, char** argv) {
 
     lifeHitCooldown = glm::max(0.0f, lifeHitCooldown - deltaTime);
     player.hurtTimer = glm::max(0.0f, player.hurtTimer - deltaTime);
+    boomerangUseAnimTimer = glm::max(0.0f, boomerangUseAnimTimer - deltaTime);
+    shotgunUseAnimTimer = glm::max(0.0f, shotgunUseAnimTimer - deltaTime);
+    swordUseAnimTimer = glm::max(0.0f, swordUseAnimTimer - deltaTime);
+    remoteBoomerangUseAnimTimer = glm::max(0.0f, remoteBoomerangUseAnimTimer - deltaTime);
+    remoteShotgunUseAnimTimer = glm::max(0.0f, remoteShotgunUseAnimTimer - deltaTime);
+    remoteSwordUseAnimTimer = glm::max(0.0f, remoteSwordUseAnimTimer - deltaTime);
     const bool leftMouseDown = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
     const bool dropDown = glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS;
     const bool useItemPressed = leftMouseDown && !wasLeftMouseDown;
@@ -2229,6 +2253,7 @@ int main(int argc, char** argv) {
         heldItem = ItemType::None;
         heldItemCharges = 0;
       } else if (heldItem == ItemType::Boomerang && !boomerangProjectile.active) {
+        boomerangUseAnimTimer = 0.28f;
         boomerangProjectile.active = true;
         boomerangProjectile.returning = false;
         boomerangProjectile.timeAlive = 0.0f;
@@ -2236,6 +2261,7 @@ int main(int argc, char** argv) {
         boomerangProjectile.velocity = forwardXZ * 24.0f;
         heldItemCharges -= 1;
       } else if (heldItem == ItemType::Shotgun && heldItemCharges > 0) {
+        shotgunUseAnimTimer = 0.22f;
         const int kPellets = 7;
         for (int pellet = 0; pellet < kPellets; ++pellet) {
           for (ShotProjectile& projectile : shotgunProjectiles) {
@@ -2254,6 +2280,7 @@ int main(int argc, char** argv) {
         heldItemCharges -= 1;
         ConsumeHeldIfEmpty();
       } else if (heldItem == ItemType::Sword && heldItemCharges > 0 && swordDashTimer <= 0.0f) {
+        swordUseAnimTimer = 0.32f;
         swordDashTimer = 0.24f;
         swordDashCurveTimer = 0.24f;
         swordDashHit = false;
@@ -3095,6 +3122,15 @@ int main(int argc, char** argv) {
     if (freshRemoteState) {
       remoteHeldItem = static_cast<ItemType>(multiplayer.latest.localHeldItemType);
       remoteHeldCharges = multiplayer.latest.localHeldItemCharges;
+      if ((multiplayer.latest.inputActions & kInputActionUseItem) != 0u) {
+        if (remoteHeldItem == ItemType::Boomerang) {
+          remoteBoomerangUseAnimTimer = 0.28f;
+        } else if (remoteHeldItem == ItemType::Shotgun) {
+          remoteShotgunUseAnimTimer = 0.22f;
+        } else if (remoteHeldItem == ItemType::Sword) {
+          remoteSwordUseAnimTimer = 0.32f;
+        }
+      }
     }
     if (freshRemoteState && multiplayerAuthority && !remoteIsAuthority) {
       const glm::vec3 remotePos(multiplayer.latest.pos[0], multiplayer.latest.pos[1], multiplayer.latest.pos[2]);
@@ -3244,9 +3280,18 @@ int main(int argc, char** argv) {
                 collectedCount,
                 livesRemaining);
 
+    const float boomerangKickNorm = glm::clamp(boomerangUseAnimTimer / 0.28f, 0.0f, 1.0f);
+    const float shotgunKickNorm = glm::clamp(shotgunUseAnimTimer / 0.22f, 0.0f, 1.0f);
+    const float swordKickNorm = glm::clamp(swordUseAnimTimer / 0.32f, 0.0f, 1.0f);
+    const float cameraShakeAmp = boomerangKickNorm * 0.025f + shotgunKickNorm * 0.1f + swordKickNorm * 0.07f;
+    const glm::vec3 cameraShake(std::sin(currentTime * 95.0f) * cameraShakeAmp,
+                  std::abs(std::sin(currentTime * 123.0f)) * cameraShakeAmp * 0.55f,
+                  std::cos(currentTime * 87.0f) * cameraShakeAmp);
     const glm::vec3 cameraOffset = cameraForward * -cameraDistance + glm::vec3(0.0f, 2.0f, 0.0f);
-    const glm::vec3 cameraTarget = player.position + glm::vec3(0.0f, 0.9f, 0.0f);
-    const glm::vec3 cameraPosTarget = player.position + cameraOffset;
+    glm::vec3 cameraTarget = player.position + glm::vec3(0.0f, 0.9f, 0.0f);
+    glm::vec3 cameraPosTarget = player.position + cameraOffset;
+    cameraPosTarget += cameraShake - cameraForward * (shotgunKickNorm * 0.35f);
+    cameraTarget += cameraForward * (swordKickNorm * 0.25f + boomerangKickNorm * 0.1f);
     const float smoothStrength = 10.0f;
     const float smoothAlpha = 1.0f - std::exp(-smoothStrength * deltaTime);
     if (!cameraInitialized) {
@@ -3485,27 +3530,27 @@ int main(int argc, char** argv) {
         continue;
       }
       const glm::vec3 tint = ItemTypeTint(item.type);
-      const float hover = 0.45f + 0.16f * std::sin(currentTime * 2.8f + item.position.x * 0.02f + item.position.z * 0.01f);
+      const float hover = 0.58f + 0.2f * std::sin(currentTime * 2.8f + item.position.x * 0.02f + item.position.z * 0.01f);
       const float spin = currentTime * 1.55f + item.position.x * 0.004f;
       const glm::vec3 base = item.position + glm::vec3(0.0f, hover, 0.0f);
 
       if (item.type == ItemType::Boomerang) {
-        DrawCubeRot(base, glm::vec3(0.0f, spin, glm::radians(28.0f)), glm::vec3(0.36f, 0.05f, 0.12f), tint, knifeTexture);
-        DrawCubeRot(base, glm::vec3(0.0f, spin, glm::radians(-28.0f)), glm::vec3(0.36f, 0.05f, 0.12f), tint * glm::vec3(1.08f, 1.05f, 0.95f), knifeTexture);
-        DrawCubeRot(base + glm::vec3(0.0f, 0.03f, 0.0f), glm::vec3(0.0f, spin, 0.0f), glm::vec3(0.08f, 0.06f, 0.08f), glm::vec3(0.3f, 0.22f, 0.18f), platformTexture);
+        DrawCubeRot(base, glm::vec3(0.0f, spin, glm::radians(28.0f)), glm::vec3(0.56f, 0.08f, 0.2f), tint, knifeTexture);
+        DrawCubeRot(base, glm::vec3(0.0f, spin, glm::radians(-28.0f)), glm::vec3(0.56f, 0.08f, 0.2f), tint * glm::vec3(1.08f, 1.05f, 0.95f), knifeTexture);
+        DrawCubeRot(base + glm::vec3(0.0f, 0.045f, 0.0f), glm::vec3(0.0f, spin, 0.0f), glm::vec3(0.13f, 0.1f, 0.13f), glm::vec3(0.3f, 0.22f, 0.18f), platformTexture);
       } else if (item.type == ItemType::SpeedBoots) {
-        DrawCubeRot(base + glm::vec3(0.14f, 0.03f, 0.0f), glm::vec3(0.0f, spin, 0.0f), glm::vec3(0.13f, 0.14f, 0.22f), tint, cloudTexture);
-        DrawCubeRot(base + glm::vec3(-0.14f, 0.03f, 0.0f), glm::vec3(0.0f, spin, 0.0f), glm::vec3(0.13f, 0.14f, 0.22f), tint, cloudTexture);
-        DrawCubeRot(base + glm::vec3(0.14f, -0.09f, -0.02f), glm::vec3(0.0f, spin, 0.0f), glm::vec3(0.15f, 0.04f, 0.24f), glm::vec3(0.18f, 0.2f, 0.24f), knifeTexture);
-        DrawCubeRot(base + glm::vec3(-0.14f, -0.09f, -0.02f), glm::vec3(0.0f, spin, 0.0f), glm::vec3(0.15f, 0.04f, 0.24f), glm::vec3(0.18f, 0.2f, 0.24f), knifeTexture);
+        DrawCubeRot(base + glm::vec3(0.23f, 0.05f, 0.0f), glm::vec3(0.0f, spin, 0.0f), glm::vec3(0.22f, 0.23f, 0.36f), tint, cloudTexture);
+        DrawCubeRot(base + glm::vec3(-0.23f, 0.05f, 0.0f), glm::vec3(0.0f, spin, 0.0f), glm::vec3(0.22f, 0.23f, 0.36f), tint, cloudTexture);
+        DrawCubeRot(base + glm::vec3(0.23f, -0.15f, -0.03f), glm::vec3(0.0f, spin, 0.0f), glm::vec3(0.25f, 0.06f, 0.38f), glm::vec3(0.18f, 0.2f, 0.24f), knifeTexture);
+        DrawCubeRot(base + glm::vec3(-0.23f, -0.15f, -0.03f), glm::vec3(0.0f, spin, 0.0f), glm::vec3(0.25f, 0.06f, 0.38f), glm::vec3(0.18f, 0.2f, 0.24f), knifeTexture);
       } else if (item.type == ItemType::Shotgun) {
-        DrawCubeRot(base, glm::vec3(0.0f, spin, 0.0f), glm::vec3(0.46f, 0.08f, 0.08f), glm::vec3(0.5f, 0.52f, 0.58f), knifeTexture);
-        DrawCubeRot(base + glm::vec3(0.17f, -0.03f, 0.0f), glm::vec3(0.0f, spin, 0.0f), glm::vec3(0.16f, 0.07f, 0.1f), glm::vec3(0.42f, 0.28f, 0.16f), platformTexture);
-        DrawCubeRot(base + glm::vec3(-0.18f, 0.02f, 0.0f), glm::vec3(0.0f, spin, 0.0f), glm::vec3(0.2f, 0.04f, 0.04f), glm::vec3(0.72f, 0.74f, 0.8f), cloudTexture);
+        DrawCubeRot(base, glm::vec3(0.0f, spin, 0.0f), glm::vec3(0.72f, 0.13f, 0.13f), glm::vec3(0.5f, 0.52f, 0.58f), knifeTexture);
+        DrawCubeRot(base + glm::vec3(0.28f, -0.05f, 0.0f), glm::vec3(0.0f, spin, 0.0f), glm::vec3(0.26f, 0.11f, 0.16f), glm::vec3(0.42f, 0.28f, 0.16f), platformTexture);
+        DrawCubeRot(base + glm::vec3(-0.28f, 0.03f, 0.0f), glm::vec3(0.0f, spin, 0.0f), glm::vec3(0.32f, 0.06f, 0.06f), glm::vec3(0.72f, 0.74f, 0.8f), cloudTexture);
       } else if (item.type == ItemType::Sword) {
-        DrawCubeRot(base + glm::vec3(0.0f, 0.16f, 0.0f), glm::vec3(0.0f, spin, 0.0f), glm::vec3(0.045f, 0.36f, 0.045f), glm::vec3(0.85f, 0.88f, 0.96f), knifeTexture);
-        DrawCubeRot(base + glm::vec3(0.0f, 0.01f, 0.0f), glm::vec3(0.0f, spin, 0.0f), glm::vec3(0.17f, 0.03f, 0.06f), glm::vec3(0.78f, 0.68f, 0.32f), platformTexture);
-        DrawCubeRot(base + glm::vec3(0.0f, -0.09f, 0.0f), glm::vec3(0.0f, spin, 0.0f), glm::vec3(0.038f, 0.14f, 0.038f), glm::vec3(0.34f, 0.24f, 0.14f), platformTexture);
+        DrawCubeRot(base + glm::vec3(0.0f, 0.25f, 0.0f), glm::vec3(0.0f, spin, 0.0f), glm::vec3(0.07f, 0.56f, 0.07f), glm::vec3(0.85f, 0.88f, 0.96f), knifeTexture);
+        DrawCubeRot(base + glm::vec3(0.0f, 0.02f, 0.0f), glm::vec3(0.0f, spin, 0.0f), glm::vec3(0.27f, 0.05f, 0.09f), glm::vec3(0.78f, 0.68f, 0.32f), platformTexture);
+        DrawCubeRot(base + glm::vec3(0.0f, -0.16f, 0.0f), glm::vec3(0.0f, spin, 0.0f), glm::vec3(0.06f, 0.22f, 0.06f), glm::vec3(0.34f, 0.24f, 0.14f), platformTexture);
       } else {
         DrawCube(base, glm::vec3(0.22f, 0.22f, 0.22f), tint, knifeTexture);
       }
@@ -3876,6 +3921,165 @@ int main(int argc, char** argv) {
                skinTint, skinTex);
     };
 
+    auto DrawHeldItemModel = [&](const glm::vec3& basePos,
+                                 float size,
+                                 float walkPhase,
+                                 float walkAmount,
+                                 float faceYaw,
+                                 ItemType itemType,
+                                 float boomerangAnim,
+                                 float shotgunAnim,
+                                 float swordAnim,
+                                 bool wearBootsOnFeet) {
+      if (itemType == ItemType::None) {
+        return;
+      }
+      const float torsoHeight = size * 1.2f;
+      const float torsoWidth = size * 0.75f;
+      const float legHeight = size * 0.9f;
+      const float armSwing = -std::sin(walkPhase) * walkAmount * size * 0.22f;
+      const float torsoSway = std::sin(walkPhase) * walkAmount * size * 0.08f;
+      const float holdBob = std::sin(walkPhase * 2.3f) * (0.02f + walkAmount * 0.03f) * size;
+      const float holdPitch = -0.2f + std::sin(walkPhase * 1.7f) * (0.05f + walkAmount * 0.07f);
+      const float shotgunKick = glm::clamp(shotgunAnim / 0.22f, 0.0f, 1.0f);
+      const float swordSwing = glm::clamp(swordAnim / 0.32f, 0.0f, 1.0f);
+      const float boomerangFlick = glm::clamp(boomerangAnim / 0.28f, 0.0f, 1.0f);
+      const glm::vec3 handLocal(torsoWidth * 0.98f,
+                                legHeight + torsoHeight * 0.58f + holdBob,
+                                armSwing + torsoSway + size * 0.18f - shotgunKick * size * 0.12f);
+
+      glm::mat4 handTransform(1.0f);
+      handTransform = glm::translate(handTransform, basePos);
+      handTransform = glm::rotate(handTransform, faceYaw, glm::vec3(0.0f, 1.0f, 0.0f));
+      handTransform = glm::translate(handTransform, handLocal);
+      handTransform = glm::rotate(handTransform, holdPitch + swordSwing * 0.65f, glm::vec3(1.0f, 0.0f, 0.0f));
+      handTransform = glm::rotate(handTransform, -shotgunKick * 0.38f + boomerangFlick * 0.55f, glm::vec3(0.0f, 0.0f, 1.0f));
+
+      const glm::vec3 tint = ItemTypeTint(itemType);
+      const float idleSpin = currentTime * 1.6f;
+      if (itemType == ItemType::SpeedBoots && wearBootsOnFeet) {
+        return;
+      }
+      if (itemType == ItemType::Boomerang) {
+        glm::mat4 modelA = handTransform;
+        modelA = glm::rotate(modelA, idleSpin + boomerangFlick * 8.0f, glm::vec3(0.0f, 1.0f, 0.0f));
+        modelA = glm::rotate(modelA, glm::radians(22.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+        modelA = glm::scale(modelA, glm::vec3(0.34f, 0.05f, 0.12f));
+        shader.SetMat4("uModel", modelA);
+        shader.SetMat3("uNormalMatrix", glm::transpose(glm::inverse(glm::mat3(modelA))));
+        shader.SetVec3("uTint", tint);
+        glBindTexture(GL_TEXTURE_2D, knifeTexture);
+        glDrawArrays(GL_TRIANGLES, 0, 36);
+
+        glm::mat4 modelB = handTransform;
+        modelB = glm::rotate(modelB, idleSpin + boomerangFlick * 8.0f, glm::vec3(0.0f, 1.0f, 0.0f));
+        modelB = glm::rotate(modelB, glm::radians(-22.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+        modelB = glm::scale(modelB, glm::vec3(0.34f, 0.05f, 0.12f));
+        shader.SetMat4("uModel", modelB);
+        shader.SetMat3("uNormalMatrix", glm::transpose(glm::inverse(glm::mat3(modelB))));
+        shader.SetVec3("uTint", tint * glm::vec3(1.06f, 1.04f, 0.95f));
+        glBindTexture(GL_TEXTURE_2D, knifeTexture);
+        glDrawArrays(GL_TRIANGLES, 0, 36);
+      } else if (itemType == ItemType::SpeedBoots) {
+        glm::mat4 modelL = handTransform;
+        modelL = glm::rotate(modelL, idleSpin, glm::vec3(0.0f, 1.0f, 0.0f));
+        modelL = glm::translate(modelL, glm::vec3(0.11f, 0.0f, 0.0f));
+        modelL = glm::scale(modelL, glm::vec3(0.12f, 0.13f, 0.2f));
+        shader.SetMat4("uModel", modelL);
+        shader.SetMat3("uNormalMatrix", glm::transpose(glm::inverse(glm::mat3(modelL))));
+        shader.SetVec3("uTint", tint);
+        glBindTexture(GL_TEXTURE_2D, cloudTexture);
+        glDrawArrays(GL_TRIANGLES, 0, 36);
+
+        glm::mat4 modelR = handTransform;
+        modelR = glm::rotate(modelR, idleSpin, glm::vec3(0.0f, 1.0f, 0.0f));
+        modelR = glm::translate(modelR, glm::vec3(-0.11f, 0.0f, 0.0f));
+        modelR = glm::scale(modelR, glm::vec3(0.12f, 0.13f, 0.2f));
+        shader.SetMat4("uModel", modelR);
+        shader.SetMat3("uNormalMatrix", glm::transpose(glm::inverse(glm::mat3(modelR))));
+        shader.SetVec3("uTint", tint);
+        glBindTexture(GL_TEXTURE_2D, cloudTexture);
+        glDrawArrays(GL_TRIANGLES, 0, 36);
+      } else if (itemType == ItemType::Shotgun) {
+        glm::mat4 model = handTransform;
+        model = glm::rotate(model, glm::radians(80.0f) - shotgunKick * 0.5f, glm::vec3(0.0f, 1.0f, 0.0f));
+        model = glm::scale(model, glm::vec3(0.46f, 0.08f, 0.08f));
+        shader.SetMat4("uModel", model);
+        shader.SetMat3("uNormalMatrix", glm::transpose(glm::inverse(glm::mat3(model))));
+        shader.SetVec3("uTint", glm::vec3(0.5f, 0.52f, 0.58f));
+        glBindTexture(GL_TEXTURE_2D, knifeTexture);
+        glDrawArrays(GL_TRIANGLES, 0, 36);
+      } else if (itemType == ItemType::Sword) {
+        glm::mat4 blade = handTransform;
+        blade = glm::rotate(blade, glm::radians(22.0f) + swordSwing * 1.1f, glm::vec3(0.0f, 0.0f, 1.0f));
+        blade = glm::translate(blade, glm::vec3(0.0f, 0.2f, 0.0f));
+        blade = glm::scale(blade, glm::vec3(0.05f, 0.45f, 0.05f));
+        shader.SetMat4("uModel", blade);
+        shader.SetMat3("uNormalMatrix", glm::transpose(glm::inverse(glm::mat3(blade))));
+        shader.SetVec3("uTint", glm::vec3(0.85f, 0.88f, 0.96f));
+        glBindTexture(GL_TEXTURE_2D, knifeTexture);
+        glDrawArrays(GL_TRIANGLES, 0, 36);
+      }
+    };
+
+    auto DrawBootsWorn = [&](const glm::vec3& basePos,
+                             float size,
+                             float walkPhase,
+                             float walkAmount,
+                             float faceYaw,
+                             const glm::vec3& tint) {
+      const float legWidth = size * 0.28f;
+      const float legHeight = size * 0.9f;
+      const float swing = std::sin(walkPhase) * walkAmount;
+      const float legSwing = swing * size * 0.18f;
+      const float legRot = swing * 0.9f;
+      const float bob = std::sin(walkPhase * 2.0f) * walkAmount * size * 0.06f;
+      const float idleBreath = std::sin(walkPhase * 0.6f) * (1.0f - walkAmount) * size * 0.03f;
+      const glm::vec3 rootPos = basePos + glm::vec3(0.0f, bob + idleBreath, 0.0f);
+
+      auto DrawBoot = [&](float sideSign) {
+        const float jointZ = sideSign * legSwing;
+        const float jointRot = sideSign * legRot;
+
+        glm::mat4 footRoot(1.0f);
+        footRoot = glm::translate(footRoot, rootPos);
+        footRoot = glm::rotate(footRoot, faceYaw, glm::vec3(0.0f, 1.0f, 0.0f));
+        footRoot = glm::translate(footRoot, glm::vec3(sideSign * legWidth * 1.2f, legHeight, jointZ));
+        footRoot = glm::rotate(footRoot, jointRot, glm::vec3(1.0f, 0.0f, 0.0f));
+        footRoot = glm::translate(footRoot, glm::vec3(0.0f, -legHeight, 0.0f));
+
+        glm::mat4 upper = footRoot;
+        upper = glm::translate(upper, glm::vec3(0.0f, 0.11f, 0.02f));
+        upper = glm::scale(upper, glm::vec3(0.18f, 0.14f, 0.25f));
+        shader.SetMat4("uModel", upper);
+        shader.SetMat3("uNormalMatrix", glm::transpose(glm::inverse(glm::mat3(upper))));
+        shader.SetVec3("uTint", tint);
+        glBindTexture(GL_TEXTURE_2D, cloudTexture);
+        glDrawArrays(GL_TRIANGLES, 0, 36);
+
+        glm::mat4 sole = footRoot;
+        sole = glm::translate(sole, glm::vec3(0.0f, 0.02f, 0.005f));
+        sole = glm::scale(sole, glm::vec3(0.2f, 0.05f, 0.3f));
+        shader.SetMat4("uModel", sole);
+        shader.SetMat3("uNormalMatrix", glm::transpose(glm::inverse(glm::mat3(sole))));
+        shader.SetVec3("uTint", glm::vec3(0.16f, 0.2f, 0.24f));
+        glBindTexture(GL_TEXTURE_2D, knifeTexture);
+        glDrawArrays(GL_TRIANGLES, 0, 36);
+
+        glm::mat4 toe = footRoot;
+        toe = glm::translate(toe, glm::vec3(0.0f, 0.06f, 0.1f));
+        toe = glm::scale(toe, glm::vec3(0.17f, 0.08f, 0.12f));
+        shader.SetMat4("uModel", toe);
+        shader.SetMat3("uNormalMatrix", glm::transpose(glm::inverse(glm::mat3(toe))));
+        shader.SetVec3("uTint", tint * glm::vec3(1.08f, 1.08f, 1.1f));
+        glBindTexture(GL_TEXTURE_2D, cloudTexture);
+        glDrawArrays(GL_TRIANGLES, 0, 36);
+      };
+
+      DrawBoot(1.0f);
+      DrawBoot(-1.0f);
+    };
+
     const float playerSize = player.halfSize * 2.0f;
     const float playerSpeed = glm::length(glm::vec2(player.velocity.x, player.velocity.z));
     const float playerWalk = glm::clamp(playerSpeed / moveSpeed, 0.0f, 1.0f);
@@ -3899,6 +4103,45 @@ int main(int argc, char** argv) {
           playerAccentTint,
            playerTexture, playerSkinTexture, playerTexture,
                  playerWalkCycle, playerWalk, playerFacing);
+        const bool localWearBoots = (playerWalk > 0.55f) && ((heldItem == ItemType::SpeedBoots) || (speedBootTimer > 0.0f));
+        DrawHeldItemModel(player.position + hurtOffset,
+                          playerSize,
+                          playerWalkCycle,
+                          playerWalk,
+                          playerFacing,
+                          heldItem,
+                          boomerangUseAnimTimer,
+                          shotgunUseAnimTimer,
+                          swordUseAnimTimer,
+                          localWearBoots);
+        if (localWearBoots) {
+          DrawBootsWorn(player.position + hurtOffset, playerSize, playerWalkCycle, playerWalk, playerFacing, ItemTypeTint(ItemType::SpeedBoots));
+        }
+
+        const glm::vec3 localForward(std::sin(playerFacing), 0.0f, std::cos(playerFacing));
+        const glm::vec3 localHandFxPos = player.position + hurtOffset + localForward * 0.65f + glm::vec3(0.0f, 1.25f, 0.0f);
+        if (boomerangUseAnimTimer > 0.0f) {
+          const float t = glm::clamp(boomerangUseAnimTimer / 0.28f, 0.0f, 1.0f);
+          const float ring = 0.18f + (1.0f - t) * 0.95f;
+          DrawCube(localHandFxPos, glm::vec3(ring, 0.03f, ring), ItemTypeTint(ItemType::Boomerang), cloudTexture);
+        }
+        if (shotgunUseAnimTimer > 0.0f) {
+          const float t = glm::clamp(shotgunUseAnimTimer / 0.22f, 0.0f, 1.0f);
+          const float flash = 0.08f + (1.0f - t) * 0.42f;
+          DrawCube(localHandFxPos + localForward * (0.8f + (1.0f - t) * 0.35f),
+                   glm::vec3(flash, flash * 0.7f, flash),
+                   glm::vec3(1.0f, 0.92f, 0.58f),
+                   cloudTexture);
+        }
+        if (swordUseAnimTimer > 0.0f) {
+          const float t = glm::clamp(swordUseAnimTimer / 0.32f, 0.0f, 1.0f);
+          const float arc = (1.0f - t) * 2.1f - 0.9f;
+          const glm::vec3 slashOffset = glm::vec3(std::sin(playerFacing + arc), 0.0f, std::cos(playerFacing + arc)) * 1.05f;
+          DrawCube(player.position + hurtOffset + slashOffset + glm::vec3(0.0f, 1.05f, 0.0f),
+                   glm::vec3(0.08f, 0.45f, 0.08f),
+                   ItemTypeTint(ItemType::Sword),
+                   knifeTexture);
+        }
 
     const bool remoteOnline = multiplayer.active && multiplayer.hasRemote &&
                               (currentTime - multiplayer.lastReceiveTime) < 2.0f;
@@ -3924,6 +4167,46 @@ int main(int argc, char** argv) {
                    remoteAccentTint,
                    playerTexture, playerSkinTexture, playerTexture,
                    remotePlayerWalkCycle, remoteWalk, multiplayer.latest.facing);
+      const bool remoteWearBoots = (remoteWalk > 0.55f) && (remoteHeldItem == ItemType::SpeedBoots);
+      DrawHeldItemModel(remoteRenderPos,
+                        playerSize,
+                        remotePlayerWalkCycle,
+                        remoteWalk,
+                        multiplayer.latest.facing,
+                        remoteHeldItem,
+                        remoteBoomerangUseAnimTimer,
+                        remoteShotgunUseAnimTimer,
+                        remoteSwordUseAnimTimer,
+                        remoteWearBoots);
+      if (remoteWearBoots) {
+        DrawBootsWorn(remoteRenderPos, playerSize, remotePlayerWalkCycle, remoteWalk, multiplayer.latest.facing, ItemTypeTint(ItemType::SpeedBoots));
+      }
+
+      const glm::vec3 remoteForward(std::sin(multiplayer.latest.facing), 0.0f, std::cos(multiplayer.latest.facing));
+      const glm::vec3 remoteHandFxPos = remoteRenderPos + remoteForward * 0.65f + glm::vec3(0.0f, 1.25f, 0.0f);
+      if (remoteBoomerangUseAnimTimer > 0.0f) {
+        const float t = glm::clamp(remoteBoomerangUseAnimTimer / 0.28f, 0.0f, 1.0f);
+        const float ring = 0.18f + (1.0f - t) * 0.95f;
+        DrawCube(remoteHandFxPos, glm::vec3(ring, 0.03f, ring), ItemTypeTint(ItemType::Boomerang), cloudTexture);
+      }
+      if (remoteShotgunUseAnimTimer > 0.0f) {
+        const float t = glm::clamp(remoteShotgunUseAnimTimer / 0.22f, 0.0f, 1.0f);
+        const float flash = 0.08f + (1.0f - t) * 0.42f;
+        DrawCube(remoteHandFxPos + remoteForward * (0.8f + (1.0f - t) * 0.35f),
+                 glm::vec3(flash, flash * 0.7f, flash),
+                 glm::vec3(1.0f, 0.92f, 0.58f),
+                 cloudTexture);
+      }
+      if (remoteSwordUseAnimTimer > 0.0f) {
+        const float t = glm::clamp(remoteSwordUseAnimTimer / 0.32f, 0.0f, 1.0f);
+        const float arc = (1.0f - t) * 2.1f - 0.9f;
+        const glm::vec3 slashOffset = glm::vec3(std::sin(multiplayer.latest.facing + arc), 0.0f,
+                                                std::cos(multiplayer.latest.facing + arc)) * 1.05f;
+        DrawCube(remoteRenderPos + slashOffset + glm::vec3(0.0f, 1.05f, 0.0f),
+                 glm::vec3(0.08f, 0.45f, 0.08f),
+                 ItemTypeTint(ItemType::Sword),
+                 knifeTexture);
+      }
     } else {
       remoteRenderInitialized = false;
     }
