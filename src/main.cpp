@@ -61,12 +61,46 @@ struct MultiplayerPacket {
   std::uint16_t level = 1u;
   std::uint32_t sequence = 0u;
   std::uint32_t flags = 0u;
+  std::uint32_t catsMask = 0u;
+  std::uint32_t dogsMask = 0u;
   std::int32_t collected = 0;
   std::int32_t lives = 0;
   float pos[3] = {0.0f, 0.0f, 0.0f};
   float vel[3] = {0.0f, 0.0f, 0.0f};
   float facing = 0.0f;
+  float clownPos[3] = {0.0f, 0.0f, 0.0f};
+  float clownVel[3] = {0.0f, 0.0f, 0.0f};
+  float clownFacing = 0.0f;
+  float clownWalkCycle = 0.0f;
+  float clownJumpCooldown = 0.0f;
+  float mummyPos[3] = {0.0f, 0.0f, 0.0f};
+  float mummyVel[3] = {0.0f, 0.0f, 0.0f};
+  float mummyFacing = 0.0f;
+  float mummyWalkCycle = 0.0f;
+  float mummyThrowCooldown = 0.0f;
+  float catPos[10][3] = {};
+  float catVel[10][3] = {};
+  float catFacing[10] = {};
+  float catWalkCycle[10] = {};
+  float dogPos[20][3] = {};
+  float dogVel[20][3] = {};
+  float dogFacing[20] = {};
+  float dogWalkCycle[20] = {};
+  float dogBlastTimer[20] = {};
+  std::uint32_t bombActiveMask = 0u;
+  float bombPos[12][3] = {};
+  float bombVel[12][3] = {};
+  float bombTimer[12] = {};
+  std::uint8_t explosionCount = 0u;
+  float explosionPos[16][3] = {};
+  float explosionAge[16] = {};
+  float explosionDuration[16] = {};
+  float explosionSeed[16] = {};
 };
+
+static constexpr std::uint32_t kNetFlagWon = 0x1u;
+static constexpr std::uint32_t kNetFlagDead = 0x2u;
+static constexpr std::uint32_t kNetFlagAuthority = 0x4u;
 
 struct MultiplayerState {
   bool active = false;
@@ -81,6 +115,25 @@ struct MultiplayerState {
   float lastReceiveTime = 0.0f;
   std::uint32_t sendSequence = 0u;
 };
+
+struct Enemy;
+struct Cat;
+struct Dog;
+struct Bomb;
+struct Explosion;
+
+static void PackWorldEntities(MultiplayerPacket& packet,
+                              const Enemy& clown,
+                              float clownFacing,
+                              float clownWalkCycle,
+                              const Enemy& mummy,
+                              float mummyFacing,
+                              float mummyWalkCycle,
+                              float mummyThrowCooldown,
+                              const std::vector<Cat>& cats,
+                              const std::vector<Dog>& dogs,
+                              const std::vector<Bomb>& bombs,
+                              const std::vector<Explosion>& explosions);
 
 static MultiplayerConfig ParseMultiplayerConfig(int argc, char** argv) {
   MultiplayerConfig config;
@@ -138,17 +191,32 @@ static bool InitMultiplayer(const MultiplayerConfig& config, MultiplayerState& s
     return true;
   }
 
+  auto FailAndCleanup = [&]() {
+    if (state.socket != kInvalidSocketHandle) {
+      CloseSocketHandle(state.socket);
+      state.socket = kInvalidSocketHandle;
+    }
+#ifdef _WIN32
+    if (state.wsaReady) {
+      WSACleanup();
+      state.wsaReady = false;
+    }
+#endif
+    state.active = false;
+    return false;
+  };
+
 #ifdef _WIN32
   WSADATA wsaData{};
   if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
-    return false;
+    return FailAndCleanup();
   }
   state.wsaReady = true;
 #endif
 
   state.socket = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
   if (state.socket == kInvalidSocketHandle) {
-    return false;
+    return FailAndCleanup();
   }
 
   sockaddr_in localAddr{};
@@ -156,18 +224,18 @@ static bool InitMultiplayer(const MultiplayerConfig& config, MultiplayerState& s
   localAddr.sin_addr.s_addr = htonl(INADDR_ANY);
   localAddr.sin_port = htons(static_cast<std::uint16_t>(config.localPort));
   if (bind(state.socket, reinterpret_cast<sockaddr*>(&localAddr), sizeof(localAddr)) != 0) {
-    return false;
+    return FailAndCleanup();
   }
 
   if (!SetSocketNonBlocking(state.socket)) {
-    return false;
+    return FailAndCleanup();
   }
 
   state.peerAddr = {};
   state.peerAddr.sin_family = AF_INET;
   state.peerAddr.sin_port = htons(static_cast<std::uint16_t>(config.peerPort));
   if (inet_pton(AF_INET, config.peerIp.c_str(), &state.peerAddr.sin_addr) != 1) {
-    return false;
+    return FailAndCleanup();
   }
 
   state.active = true;
@@ -231,8 +299,22 @@ static void SendMultiplayerSnapshot(MultiplayerState& state,
                                     const glm::vec3& velocity,
                                     float facing,
                                     std::uint16_t level,
+                                    bool isAuthority,
                                     bool hasWon,
                                     bool isDead,
+                                    std::uint32_t catsMask,
+                                    std::uint32_t dogsMask,
+                                    const Enemy& clown,
+                                    float clownFacing,
+                                    float clownWalkCycle,
+                                    const Enemy& mummy,
+                                    float mummyFacing,
+                                    float mummyWalkCycle,
+                                    float mummyThrowCooldown,
+                                    const std::vector<Cat>& cats,
+                                    const std::vector<Dog>& dogs,
+                                    const std::vector<Bomb>& bombs,
+                                    const std::vector<Explosion>& explosions,
                                     int collected,
                                     int lives) {
   if (!state.active || state.socket == kInvalidSocketHandle) {
@@ -242,7 +324,11 @@ static void SendMultiplayerSnapshot(MultiplayerState& state,
   MultiplayerPacket packet{};
   packet.sequence = ++state.sendSequence;
   packet.level = level;
-  packet.flags = (hasWon ? 0x1u : 0u) | (isDead ? 0x2u : 0u);
+  packet.flags = (hasWon ? kNetFlagWon : 0u) |
+                 (isDead ? kNetFlagDead : 0u) |
+                 (isAuthority ? kNetFlagAuthority : 0u);
+  packet.catsMask = catsMask;
+  packet.dogsMask = dogsMask;
   packet.collected = collected;
   packet.lives = lives;
   packet.pos[0] = position.x;
@@ -252,6 +338,18 @@ static void SendMultiplayerSnapshot(MultiplayerState& state,
   packet.vel[1] = velocity.y;
   packet.vel[2] = velocity.z;
   packet.facing = facing;
+  PackWorldEntities(packet,
+                    clown,
+                    clownFacing,
+                    clownWalkCycle,
+                    mummy,
+                    mummyFacing,
+                    mummyWalkCycle,
+                    mummyThrowCooldown,
+                    cats,
+                    dogs,
+                    bombs,
+                    explosions);
 
   sendto(state.socket,
          reinterpret_cast<const char*>(&packet),
@@ -580,6 +678,177 @@ struct Explosion {
   float seed = 0.0f;
 };
 
+static void WriteVec3(float out[3], const glm::vec3& value) {
+  out[0] = value.x;
+  out[1] = value.y;
+  out[2] = value.z;
+}
+
+static glm::vec3 ReadVec3(const float in[3]) {
+  return glm::vec3(in[0], in[1], in[2]);
+}
+
+static std::uint32_t BuildCollectedCatMask(const std::vector<Cat>& cats) {
+  std::uint32_t mask = 0u;
+  for (std::size_t i = 0; i < cats.size() && i < 32; ++i) {
+    if (cats[i].collected) {
+      mask |= (1u << static_cast<std::uint32_t>(i));
+    }
+  }
+  return mask;
+}
+
+static std::uint32_t BuildCollectedDogMask(const std::vector<Dog>& dogs) {
+  std::uint32_t mask = 0u;
+  for (std::size_t i = 0; i < dogs.size() && i < 32; ++i) {
+    if (dogs[i].collected) {
+      mask |= (1u << static_cast<std::uint32_t>(i));
+    }
+  }
+  return mask;
+}
+
+static int ApplyCollectedCatMask(std::vector<Cat>& cats, std::uint32_t mask) {
+  int count = 0;
+  for (std::size_t i = 0; i < cats.size() && i < 32; ++i) {
+    const bool collected = (mask & (1u << static_cast<std::uint32_t>(i))) != 0u;
+    cats[i].collected = cats[i].collected || collected;
+    if (cats[i].collected) {
+      ++count;
+    }
+  }
+  return count;
+}
+
+static int ApplyCollectedDogMask(std::vector<Dog>& dogs, std::uint32_t mask) {
+  int count = 0;
+  for (std::size_t i = 0; i < dogs.size() && i < 32; ++i) {
+    const bool collected = (mask & (1u << static_cast<std::uint32_t>(i))) != 0u;
+    dogs[i].collected = dogs[i].collected || collected;
+    if (dogs[i].collected) {
+      ++count;
+    }
+  }
+  return count;
+}
+
+static void PackWorldEntities(MultiplayerPacket& packet,
+                              const Enemy& clown,
+                              float clownFacing,
+                              float clownWalkCycle,
+                              const Enemy& mummy,
+                              float mummyFacing,
+                              float mummyWalkCycle,
+                              float mummyThrowCooldown,
+                              const std::vector<Cat>& cats,
+                              const std::vector<Dog>& dogs,
+                              const std::vector<Bomb>& bombs,
+                              const std::vector<Explosion>& explosions) {
+  WriteVec3(packet.clownPos, clown.position);
+  WriteVec3(packet.clownVel, clown.velocity);
+  packet.clownFacing = clownFacing;
+  packet.clownWalkCycle = clownWalkCycle;
+  packet.clownJumpCooldown = clown.jumpCooldown;
+
+  WriteVec3(packet.mummyPos, mummy.position);
+  WriteVec3(packet.mummyVel, mummy.velocity);
+  packet.mummyFacing = mummyFacing;
+  packet.mummyWalkCycle = mummyWalkCycle;
+  packet.mummyThrowCooldown = mummyThrowCooldown;
+
+  for (std::size_t i = 0; i < cats.size() && i < 10; ++i) {
+    WriteVec3(packet.catPos[i], cats[i].position);
+    WriteVec3(packet.catVel[i], cats[i].velocity);
+    packet.catFacing[i] = cats[i].facing;
+    packet.catWalkCycle[i] = cats[i].walkCycle;
+  }
+
+  for (std::size_t i = 0; i < dogs.size() && i < 20; ++i) {
+    WriteVec3(packet.dogPos[i], dogs[i].position);
+    WriteVec3(packet.dogVel[i], dogs[i].velocity);
+    packet.dogFacing[i] = dogs[i].facing;
+    packet.dogWalkCycle[i] = dogs[i].walkCycle;
+    packet.dogBlastTimer[i] = dogs[i].blastTimer;
+  }
+
+  packet.bombActiveMask = 0u;
+  for (std::size_t i = 0; i < bombs.size() && i < 12; ++i) {
+    if (bombs[i].active) {
+      packet.bombActiveMask |= (1u << static_cast<std::uint32_t>(i));
+    }
+    WriteVec3(packet.bombPos[i], bombs[i].position);
+    WriteVec3(packet.bombVel[i], bombs[i].velocity);
+    packet.bombTimer[i] = bombs[i].timer;
+  }
+
+  packet.explosionCount = static_cast<std::uint8_t>(std::min<std::size_t>(explosions.size(), 16));
+  for (std::size_t i = 0; i < packet.explosionCount; ++i) {
+    WriteVec3(packet.explosionPos[i], explosions[i].position);
+    packet.explosionAge[i] = explosions[i].age;
+    packet.explosionDuration[i] = explosions[i].duration;
+    packet.explosionSeed[i] = explosions[i].seed;
+  }
+}
+
+static void ApplyWorldEntities(const MultiplayerPacket& packet,
+                               Enemy& clown,
+                               float& clownFacing,
+                               float& clownWalkCycle,
+                               Enemy& mummy,
+                               float& mummyFacing,
+                               float& mummyWalkCycle,
+                               float& mummyThrowCooldown,
+                               std::vector<Cat>& cats,
+                               std::vector<Dog>& dogs,
+                               std::vector<Bomb>& bombs,
+                               std::vector<Explosion>& explosions) {
+  clown.position = ReadVec3(packet.clownPos);
+  clown.velocity = ReadVec3(packet.clownVel);
+  clownFacing = packet.clownFacing;
+  clownWalkCycle = packet.clownWalkCycle;
+  clown.jumpCooldown = packet.clownJumpCooldown;
+
+  mummy.position = ReadVec3(packet.mummyPos);
+  mummy.velocity = ReadVec3(packet.mummyVel);
+  mummyFacing = packet.mummyFacing;
+  mummyWalkCycle = packet.mummyWalkCycle;
+  mummyThrowCooldown = packet.mummyThrowCooldown;
+
+  for (std::size_t i = 0; i < cats.size() && i < 10; ++i) {
+    cats[i].position = ReadVec3(packet.catPos[i]);
+    cats[i].velocity = ReadVec3(packet.catVel[i]);
+    cats[i].facing = packet.catFacing[i];
+    cats[i].walkCycle = packet.catWalkCycle[i];
+  }
+
+  for (std::size_t i = 0; i < dogs.size() && i < 20; ++i) {
+    dogs[i].position = ReadVec3(packet.dogPos[i]);
+    dogs[i].velocity = ReadVec3(packet.dogVel[i]);
+    dogs[i].facing = packet.dogFacing[i];
+    dogs[i].walkCycle = packet.dogWalkCycle[i];
+    dogs[i].blastTimer = packet.dogBlastTimer[i];
+  }
+
+  for (std::size_t i = 0; i < bombs.size() && i < 12; ++i) {
+    bombs[i].active = (packet.bombActiveMask & (1u << static_cast<std::uint32_t>(i))) != 0u;
+    bombs[i].position = ReadVec3(packet.bombPos[i]);
+    bombs[i].velocity = ReadVec3(packet.bombVel[i]);
+    bombs[i].timer = packet.bombTimer[i];
+  }
+
+  explosions.clear();
+  const std::size_t count = std::min<std::size_t>(packet.explosionCount, 16);
+  explosions.reserve(count);
+  for (std::size_t i = 0; i < count; ++i) {
+    Explosion explosion;
+    explosion.position = ReadVec3(packet.explosionPos[i]);
+    explosion.age = packet.explosionAge[i];
+    explosion.duration = packet.explosionDuration[i];
+    explosion.seed = packet.explosionSeed[i];
+    explosions.push_back(explosion);
+  }
+}
+
 static void FramebufferSizeCallback(GLFWwindow* window, int width, int height) {
   (void)window;
   glViewport(0, 0, width, height);
@@ -863,7 +1132,7 @@ static GLuint BuildCloudTexture() {
 }
 
 int main(int argc, char** argv) {
-  const MultiplayerConfig multiplayerConfig = ParseMultiplayerConfig(argc, argv);
+  MultiplayerConfig multiplayerConfig = ParseMultiplayerConfig(argc, argv);
   MultiplayerState multiplayer;
   if (!InitMultiplayer(multiplayerConfig, multiplayer)) {
     std::cerr << "Multiplayer init failed. Running in single-player mode.\n";
@@ -1187,6 +1456,13 @@ int main(int argc, char** argv) {
   int livesRemaining = 5;
   float lifeHitCooldown = 0.0f;
   bool isDead = false;
+  bool showMultiplayerWindow = !multiplayer.active;
+  bool multiplayerAuthority = multiplayerConfig.localPort <= multiplayerConfig.peerPort;
+  int mpUiLocalPort = multiplayerConfig.localPort;
+  int mpUiPeerPort = multiplayerConfig.peerPort;
+  char mpUiPeerIp[64] = {};
+  std::snprintf(mpUiPeerIp, sizeof(mpUiPeerIp), "%s", multiplayerConfig.peerIp.c_str());
+  std::string mpUiStatus = multiplayer.active ? "Connected." : "Not connected.";
 
   auto ResetLevel1 = [&]() {
     currentLevel = GameLevel::Level1Cats;
@@ -2028,14 +2304,75 @@ int main(int argc, char** argv) {
     }
 
     const std::uint16_t localLevel = (currentLevel == GameLevel::Level1Cats) ? 1u : 2u;
+    const std::uint32_t localCatsMask = BuildCollectedCatMask(cats);
+    const std::uint32_t localDogsMask = BuildCollectedDogMask(dogs);
     PollMultiplayer(multiplayer, currentTime);
+
+    const bool freshRemoteState = multiplayer.active && multiplayer.hasRemote &&
+                                  (currentTime - multiplayer.lastReceiveTime) < 2.0f;
+    const bool remoteIsAuthority = freshRemoteState && ((multiplayer.latest.flags & kNetFlagAuthority) != 0u);
+    if (remoteIsAuthority && !multiplayerAuthority) {
+      const std::uint16_t remoteLevel = multiplayer.latest.level;
+      if (remoteLevel >= 2u && currentLevel == GameLevel::Level1Cats) {
+        ResetLevel2();
+      }
+      if (remoteLevel <= 1u && currentLevel == GameLevel::Level2Dogs) {
+        ResetLevel1();
+      }
+
+      ApplyWorldEntities(multiplayer.latest,
+                         clown,
+                         clownFacing,
+                         clownWalkCycle,
+                         mummy,
+                         mummyFacing,
+                         mummyWalkCycle,
+                         mummyThrowCooldown,
+                         cats,
+                         dogs,
+                         bombs,
+                         explosions);
+
+      collectedCount = std::max(0, multiplayer.latest.collected);
+      livesRemaining = std::max(0, multiplayer.latest.lives);
+      isDead = (multiplayer.latest.flags & kNetFlagDead) != 0u;
+      hasWon = (multiplayer.latest.flags & kNetFlagWon) != 0u;
+    } else if (freshRemoteState) {
+      const std::uint32_t mergedCatsMask = localCatsMask | multiplayer.latest.catsMask;
+      const std::uint32_t mergedDogsMask = localDogsMask | multiplayer.latest.dogsMask;
+      const int catsCollectedNow = ApplyCollectedCatMask(cats, mergedCatsMask);
+      const int dogsCollectedNow = ApplyCollectedDogMask(dogs, mergedDogsMask);
+      collectedCount = (currentLevel == GameLevel::Level1Cats) ? catsCollectedNow : dogsCollectedNow;
+
+      if ((multiplayer.latest.flags & kNetFlagDead) != 0u) {
+        isDead = true;
+      }
+      if ((multiplayer.latest.flags & kNetFlagWon) != 0u) {
+        hasWon = true;
+      }
+    }
+
     SendMultiplayerSnapshot(multiplayer,
                 player.position,
                 player.velocity,
                 playerFacing,
                 localLevel,
+                multiplayerAuthority,
                 hasWon,
                 isDead,
+                BuildCollectedCatMask(cats),
+                BuildCollectedDogMask(dogs),
+                clown,
+                clownFacing,
+                clownWalkCycle,
+                mummy,
+                mummyFacing,
+                mummyWalkCycle,
+                mummyThrowCooldown,
+                cats,
+                dogs,
+                bombs,
+                explosions,
                 collectedCount,
                 livesRemaining);
 
@@ -2633,6 +2970,50 @@ int main(int argc, char** argv) {
     ImGui::Text("Esc/P: Pause");
     ImGui::End();
 
+    if (showMultiplayerWindow) {
+      ImGui::SetNextWindowPos(ImVec2(12.0f, 232.0f), ImGuiCond_FirstUseEver);
+      ImGui::SetNextWindowBgAlpha(0.58f);
+      ImGui::Begin("Multiplayer", &showMultiplayerWindow,
+                   ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize);
+      ImGui::TextWrapped("Connect two players and keep one shared progression state (level, collectibles, win/death, lives).");
+      ImGui::InputInt("Local UDP Port", &mpUiLocalPort);
+      ImGui::InputText("Peer IP", mpUiPeerIp, static_cast<int>(sizeof(mpUiPeerIp)));
+      ImGui::InputInt("Peer UDP Port", &mpUiPeerPort);
+      ImGui::Checkbox("Authoritative Host", &multiplayerAuthority);
+      mpUiLocalPort = std::max(1, mpUiLocalPort);
+      mpUiPeerPort = std::max(1, mpUiPeerPort);
+
+      if (ImGui::Button("Connect", ImVec2(120.0f, 0.0f))) {
+        MultiplayerConfig nextConfig;
+        nextConfig.enabled = true;
+        nextConfig.localPort = mpUiLocalPort;
+        nextConfig.peerIp = mpUiPeerIp;
+        nextConfig.peerPort = mpUiPeerPort;
+        ShutdownMultiplayer(multiplayer);
+        if (InitMultiplayer(nextConfig, multiplayer)) {
+          multiplayerConfig = nextConfig;
+          mpUiStatus = "Connected.";
+        } else {
+          mpUiStatus = "Connect failed. Verify IP/ports and firewall.";
+          ShutdownMultiplayer(multiplayer);
+        }
+      }
+      ImGui::SameLine();
+      if (ImGui::Button("Disconnect", ImVec2(120.0f, 0.0f))) {
+        ShutdownMultiplayer(multiplayer);
+        mpUiStatus = "Disconnected.";
+      }
+
+      const bool peerConnected = multiplayer.active && multiplayer.hasRemote &&
+                                 (currentTime - multiplayer.lastReceiveTime) < 2.0f;
+      ImGui::Separator();
+      ImGui::Text("Session: %s", multiplayer.active ? "Online" : "Offline");
+      ImGui::Text("Role: %s", multiplayerAuthority ? "Host (authoritative)" : "Client (mirrors host)");
+      ImGui::Text("Peer: %s", peerConnected ? "Connected" : "Waiting...");
+      ImGui::TextWrapped("%s", mpUiStatus.c_str());
+      ImGui::End();
+    }
+
     if (showDebugHud) {
       ImGui::SetNextWindowPos(ImVec2(12.0f, 170.0f), ImGuiCond_Always);
       ImGui::SetNextWindowBgAlpha(0.45f);
@@ -2665,6 +3046,7 @@ int main(int argc, char** argv) {
       ImGui::SliderFloat("Camera Distance", &cameraDistance, 3.0f, 10.0f);
       ImGui::Checkbox("Invert Look Y", &invertLookY);
       ImGui::Checkbox("Show Debug HUD", &showDebugHud);
+      ImGui::Checkbox("Show Multiplayer Window", &showMultiplayerWindow);
       ImGui::Separator();
       if (ImGui::Button("Resume", ImVec2(-1.0f, 0.0f))) {
         isPaused = false;

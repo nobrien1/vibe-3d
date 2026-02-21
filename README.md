@@ -40,8 +40,18 @@ This project uses CMake and downloads dependencies during configure. The glad lo
 This build now supports a simple 2-player online mode over UDP.
 
 - Each player runs their own game instance.
-- Gameplay state is still local, but player movement/pose is synced and rendered in-world.
+- Shared progression state is synced between players (level, collectibles, lives, win/death).
+- Full world entity state now syncs (cats, dogs, clown, mummy, bombs, explosions).
+- Player movement/pose is synced and rendered in-world.
 - Useful for quick co-op testing over LAN or direct IP forwarding.
+
+### In-game connection UI
+
+- Open the **Multiplayer** window in-game to connect/disconnect.
+- You can show/hide it from the Pause menu: **Show Multiplayer Window**.
+- Enter local UDP port, peer IP, peer UDP port, then press **Connect**.
+- Enable **Authoritative Host** on the instance that should drive world simulation.
+- On the other instance, leave it off so it mirrors host world state.
 
 ### Command-line options
 
