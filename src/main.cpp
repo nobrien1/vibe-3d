@@ -130,11 +130,22 @@ struct MultiplayerPacket {
   float explosionAge[16] = {};
   float explosionDuration[16] = {};
   float explosionSeed[16] = {};
+  std::uint32_t worldItemActiveMask = 0u;
+  std::uint8_t worldItemType[16] = {};
+  float worldItemPos[16][3] = {};
+  std::uint8_t localHeldItemType = 0u;
+  std::int32_t localHeldItemCharges = 0;
+  std::uint32_t inputActions = 0u;
+  std::uint32_t enemyAliveMask = 0u;
+  float enemyRespawnTimer[2] = {};
+  float enemyStunTimer[2] = {};
 };
 
 static constexpr std::uint32_t kNetFlagWon = 0x1u;
 static constexpr std::uint32_t kNetFlagDead = 0x2u;
 static constexpr std::uint32_t kNetFlagAuthority = 0x4u;
+static constexpr std::uint32_t kInputActionUseItem = 0x1u;
+static constexpr std::uint32_t kInputActionDropItem = 0x2u;
 
 struct MultiplayerState {
   bool active = false;
@@ -159,6 +170,8 @@ struct Cat;
 struct Dog;
 struct Bomb;
 struct Explosion;
+struct WorldItem;
+enum class ItemType : std::uint8_t;
 
 static void PackWorldEntities(MultiplayerPacket& packet,
                               const Enemy& clown,
@@ -171,7 +184,16 @@ static void PackWorldEntities(MultiplayerPacket& packet,
                               const std::vector<Cat>& cats,
                               const std::vector<Dog>& dogs,
                               const std::vector<Bomb>& bombs,
-                              const std::vector<Explosion>& explosions);
+                              const std::vector<Explosion>& explosions,
+                              const std::vector<WorldItem>& worldItems,
+                              ItemType heldItem,
+                              int heldCharges,
+                              bool clownAlive,
+                              float clownRespawnTimer,
+                              float clownStunTimer,
+                              bool mummyAlive,
+                              float mummyRespawnTimer,
+                              float mummyStunTimer);
 
 static MultiplayerConfig ParseMultiplayerConfig(int argc, char** argv) {
   MultiplayerConfig config;
@@ -449,6 +471,7 @@ static void SendMultiplayerSnapshot(MultiplayerState& state,
                                     const glm::vec3& position,
                                     const glm::vec3& velocity,
                                     float facing,
+                                    std::uint32_t inputActions,
                                     std::uint16_t level,
                                     bool isAuthority,
                                     bool hasWon,
@@ -466,6 +489,15 @@ static void SendMultiplayerSnapshot(MultiplayerState& state,
                                     const std::vector<Dog>& dogs,
                                     const std::vector<Bomb>& bombs,
                                     const std::vector<Explosion>& explosions,
+                                    const std::vector<WorldItem>& worldItems,
+                                    ItemType heldItem,
+                                    int heldCharges,
+                                    bool clownAlive,
+                                    float clownRespawnTimer,
+                                    float clownStunTimer,
+                                    bool mummyAlive,
+                                    float mummyRespawnTimer,
+                                    float mummyStunTimer,
                                     int collected,
                                     int lives) {
   if (!state.active || state.socket == kInvalidSocketHandle) {
@@ -489,6 +521,7 @@ static void SendMultiplayerSnapshot(MultiplayerState& state,
   packet.vel[1] = velocity.y;
   packet.vel[2] = velocity.z;
   packet.facing = facing;
+  packet.inputActions = inputActions;
   PackWorldEntities(packet,
                     clown,
                     clownFacing,
@@ -500,7 +533,16 @@ static void SendMultiplayerSnapshot(MultiplayerState& state,
                     cats,
                     dogs,
                     bombs,
-                    explosions);
+                    explosions,
+                    worldItems,
+                    heldItem,
+                    heldCharges,
+                    clownAlive,
+                    clownRespawnTimer,
+                    clownStunTimer,
+                    mummyAlive,
+                    mummyRespawnTimer,
+                    mummyStunTimer);
 
   sendto(state.socket,
          reinterpret_cast<const char*>(&packet),
@@ -744,6 +786,14 @@ struct Player {
   float hurtTimer = 0.0f;
 };
 
+enum class ItemType : std::uint8_t {
+  None = 0,
+  Boomerang = 1,
+  SpeedBoots = 2,
+  Shotgun = 3,
+  Sword = 4,
+};
+
 struct Enemy {
   glm::vec3 position{4.0f, 0.0f, -4.0f};
   glm::vec3 velocity{0.0f};
@@ -815,6 +865,27 @@ struct Dog {
   float blastTimer = 0.0f;
 };
 
+struct WorldItem {
+  ItemType type = ItemType::None;
+  glm::vec3 position{0.0f};
+  bool active = true;
+};
+
+struct ShotProjectile {
+  glm::vec3 position{0.0f};
+  glm::vec3 velocity{0.0f};
+  float lifetime = 0.0f;
+  bool active = false;
+};
+
+struct BoomerangProjectile {
+  bool active = false;
+  glm::vec3 position{0.0f};
+  glm::vec3 velocity{0.0f};
+  bool returning = false;
+  float timeAlive = 0.0f;
+};
+
 struct Bomb {
   glm::vec3 position{0.0f};
   glm::vec3 velocity{0.0f};
@@ -827,6 +898,13 @@ struct Explosion {
   float age = 0.0f;
   float duration = 0.6f;
   float seed = 0.0f;
+};
+
+struct CollectSprite {
+  glm::vec3 position{0.0f};
+  ItemType itemType = ItemType::None;
+  float age = 0.0f;
+  float duration = 0.8f;
 };
 
 static void WriteVec3(float out[3], const glm::vec3& value) {
@@ -883,6 +961,54 @@ static int ApplyCollectedDogMask(std::vector<Dog>& dogs, std::uint32_t mask) {
   return count;
 }
 
+static std::uint32_t BuildActiveWorldItemMask(const std::vector<WorldItem>& worldItems) {
+  std::uint32_t mask = 0u;
+  for (std::size_t i = 0; i < worldItems.size() && i < 32; ++i) {
+    if (worldItems[i].active) {
+      mask |= (1u << static_cast<std::uint32_t>(i));
+    }
+  }
+  return mask;
+}
+
+static glm::vec3 ScaleXZ(const glm::vec3& value, float scale) {
+  return glm::vec3(value.x * scale, value.y, value.z * scale);
+}
+
+static glm::vec3 ScaleExtentXZ(const glm::vec3& value, float scale) {
+  return glm::vec3(value.x * scale, value.y, value.z * scale);
+}
+
+static const char* ItemTypeName(ItemType type) {
+  switch (type) {
+    case ItemType::Boomerang:
+      return "Boomerang";
+    case ItemType::SpeedBoots:
+      return "Speed Boots";
+    case ItemType::Shotgun:
+      return "Shotgun";
+    case ItemType::Sword:
+      return "Sword";
+    default:
+      return "None";
+  }
+}
+
+static glm::vec3 ItemTypeTint(ItemType type) {
+  switch (type) {
+    case ItemType::Boomerang:
+      return glm::vec3(0.95f, 0.72f, 0.24f);
+    case ItemType::SpeedBoots:
+      return glm::vec3(0.24f, 0.74f, 1.0f);
+    case ItemType::Shotgun:
+      return glm::vec3(0.55f, 0.55f, 0.62f);
+    case ItemType::Sword:
+      return glm::vec3(0.85f, 0.85f, 0.95f);
+    default:
+      return glm::vec3(0.8f, 0.8f, 0.8f);
+  }
+}
+
 static void PackWorldEntities(MultiplayerPacket& packet,
                               const Enemy& clown,
                               float clownFacing,
@@ -894,7 +1020,16 @@ static void PackWorldEntities(MultiplayerPacket& packet,
                               const std::vector<Cat>& cats,
                               const std::vector<Dog>& dogs,
                               const std::vector<Bomb>& bombs,
-                              const std::vector<Explosion>& explosions) {
+                              const std::vector<Explosion>& explosions,
+                              const std::vector<WorldItem>& worldItems,
+                              ItemType heldItem,
+                              int heldCharges,
+                              bool clownAlive,
+                              float clownRespawnTimer,
+                              float clownStunTimer,
+                              bool mummyAlive,
+                              float mummyRespawnTimer,
+                              float mummyStunTimer) {
   WriteVec3(packet.clownPos, clown.position);
   WriteVec3(packet.clownVel, clown.velocity);
   packet.clownFacing = clownFacing;
@@ -939,6 +1074,21 @@ static void PackWorldEntities(MultiplayerPacket& packet,
     packet.explosionDuration[i] = explosions[i].duration;
     packet.explosionSeed[i] = explosions[i].seed;
   }
+
+  packet.worldItemActiveMask = BuildActiveWorldItemMask(worldItems);
+  for (std::size_t i = 0; i < worldItems.size() && i < 16; ++i) {
+    packet.worldItemType[i] = static_cast<std::uint8_t>(worldItems[i].type);
+    WriteVec3(packet.worldItemPos[i], worldItems[i].position);
+  }
+
+  packet.localHeldItemType = static_cast<std::uint8_t>(heldItem);
+  packet.localHeldItemCharges = heldCharges;
+
+  packet.enemyAliveMask = (clownAlive ? 0x1u : 0u) | (mummyAlive ? 0x2u : 0u);
+  packet.enemyRespawnTimer[0] = clownRespawnTimer;
+  packet.enemyRespawnTimer[1] = mummyRespawnTimer;
+  packet.enemyStunTimer[0] = clownStunTimer;
+  packet.enemyStunTimer[1] = mummyStunTimer;
 }
 
 static void ApplyWorldEntities(const MultiplayerPacket& packet,
@@ -952,7 +1102,16 @@ static void ApplyWorldEntities(const MultiplayerPacket& packet,
                                std::vector<Cat>& cats,
                                std::vector<Dog>& dogs,
                                std::vector<Bomb>& bombs,
-                               std::vector<Explosion>& explosions) {
+                               std::vector<Explosion>& explosions,
+                               std::vector<WorldItem>& worldItems,
+                               ItemType& remoteHeldItem,
+                               int& remoteHeldCharges,
+                               bool& clownAlive,
+                               float& clownRespawnTimer,
+                               float& clownStunTimer,
+                               bool& mummyAlive,
+                               float& mummyRespawnTimer,
+                               float& mummyStunTimer) {
   clown.position = ReadVec3(packet.clownPos);
   clown.velocity = ReadVec3(packet.clownVel);
   clownFacing = packet.clownFacing;
@@ -998,6 +1157,22 @@ static void ApplyWorldEntities(const MultiplayerPacket& packet,
     explosion.seed = packet.explosionSeed[i];
     explosions.push_back(explosion);
   }
+
+  for (std::size_t i = 0; i < worldItems.size() && i < 16; ++i) {
+    worldItems[i].active = (packet.worldItemActiveMask & (1u << static_cast<std::uint32_t>(i))) != 0u;
+    worldItems[i].type = static_cast<ItemType>(packet.worldItemType[i]);
+    worldItems[i].position = ReadVec3(packet.worldItemPos[i]);
+  }
+
+  remoteHeldItem = static_cast<ItemType>(packet.localHeldItemType);
+  remoteHeldCharges = packet.localHeldItemCharges;
+
+  clownAlive = (packet.enemyAliveMask & 0x1u) != 0u;
+  mummyAlive = (packet.enemyAliveMask & 0x2u) != 0u;
+  clownRespawnTimer = packet.enemyRespawnTimer[0];
+  mummyRespawnTimer = packet.enemyRespawnTimer[1];
+  clownStunTimer = packet.enemyStunTimer[0];
+  mummyStunTimer = packet.enemyStunTimer[1];
 }
 
 static void FramebufferSizeCallback(GLFWwindow* window, int width, int height) {
@@ -1450,6 +1625,7 @@ int main(int argc, char** argv) {
   }
 
   Player player;
+  constexpr float kMapScale = 10.0f;
   const glm::vec3 playerSpawn{0.0f, 2.0f, 0.0f};
   Enemy clown;
   const float gravity = -18.0f;
@@ -1530,6 +1706,29 @@ int main(int argc, char** argv) {
   };
   std::vector<Bomb> bombs(12);
   std::vector<Explosion> explosions;
+  std::vector<WorldItem> worldItems = {
+      {ItemType::Boomerang, glm::vec3(6.0f, 0.7f, -4.0f), true},
+      {ItemType::SpeedBoots, glm::vec3(-8.0f, 0.7f, 6.0f), true},
+      {ItemType::Shotgun, glm::vec3(12.0f, 0.7f, -10.0f), true},
+      {ItemType::Sword, glm::vec3(-14.0f, 0.7f, -8.0f), true},
+      {ItemType::Boomerang, glm::vec3(-16.0f, 0.7f, 12.0f), true},
+      {ItemType::SpeedBoots, glm::vec3(16.0f, 0.7f, 12.0f), true},
+      {ItemType::Shotgun, glm::vec3(-4.0f, 0.7f, 14.0f), true},
+      {ItemType::Sword, glm::vec3(4.0f, 0.7f, -14.0f), true},
+  };
+  for (Platform& platform : platforms) {
+    platform.position = ScaleXZ(platform.position, kMapScale);
+    platform.halfExtents = ScaleExtentXZ(platform.halfExtents, kMapScale);
+  }
+  for (Cat& cat : cats) {
+    cat.position = ScaleXZ(cat.position, kMapScale);
+  }
+  for (Dog& dog : dogs) {
+    dog.position = ScaleXZ(dog.position, kMapScale);
+  }
+  for (WorldItem& item : worldItems) {
+    item.position = ScaleXZ(item.position, kMapScale);
+  }
   unsigned int dogSeed = 9001u;
   for (Dog& dog : dogs) {
     dog.seed = dogSeed;
@@ -1541,23 +1740,44 @@ int main(int argc, char** argv) {
     dog.wanderTarget = dog.position;
   }
   Enemy mummy;
-  mummy.position = glm::vec3(-2.0f, 0.45f, -10.0f);
+  mummy.position = ScaleXZ(glm::vec3(-2.0f, 0.45f, -10.0f), kMapScale);
   mummy.speed = 2.2f;
   float mummyFacing = 0.0f;
   float mummyWalkCycle = 0.0f;
   float mummyThrowCooldown = 1.4f;
   const glm::vec3 levelOneSpawn = playerSpawn;
-  const glm::vec3 levelTwoSpawn(-16.0f, 2.0f, -16.0f);
-  const glm::vec3 carPositionLevel1(18.0f, 0.0f, 16.0f);
-  const glm::vec3 carPositionLevel2(-18.0f, 0.0f, 18.0f);
+  const glm::vec3 levelTwoSpawn = ScaleXZ(glm::vec3(-16.0f, 2.0f, -16.0f), kMapScale);
+  const glm::vec3 carPositionLevel1 = ScaleXZ(glm::vec3(18.0f, 0.0f, 16.0f), kMapScale);
+  const glm::vec3 carPositionLevel2 = ScaleXZ(glm::vec3(-18.0f, 0.0f, 18.0f), kMapScale);
   enum class GameLevel { Level1Cats, Level2Dogs };
   GameLevel currentLevel = GameLevel::Level1Cats;
   bool levelOneAnnounced = false;
   const float worldGroundTop = platforms[0].position.y + platforms[0].halfExtents.y;
-  const glm::vec3 clownStartPosition(4.0f, worldGroundTop + clown.halfSize, -4.0f);
-  const glm::vec3 mummyStartPosition(-2.0f, worldGroundTop + mummy.halfSize, -10.0f);
+  const glm::vec3 clownStartPosition = ScaleXZ(glm::vec3(4.0f, worldGroundTop + clown.halfSize, -4.0f), kMapScale);
+  const glm::vec3 mummyStartPosition = ScaleXZ(glm::vec3(-2.0f, worldGroundTop + mummy.halfSize, -10.0f), kMapScale);
+  clown.position = clownStartPosition;
+  mummy.position = mummyStartPosition;
   const std::vector<Cat> initialCats = cats;
   const std::vector<Dog> initialDogs = dogs;
+  const std::vector<WorldItem> initialWorldItems = worldItems;
+  ItemType heldItem = ItemType::None;
+  int heldItemCharges = 0;
+  ItemType remoteHeldItem = ItemType::None;
+  int remoteHeldCharges = 0;
+  float speedBootTimer = 0.0f;
+  BoomerangProjectile boomerangProjectile;
+  std::vector<ShotProjectile> shotgunProjectiles(24);
+  std::vector<CollectSprite> collectSprites;
+  float swordDashTimer = 0.0f;
+  float swordDashCurveTimer = 0.0f;
+  glm::vec3 swordDashDir(0.0f);
+  bool swordDashHit = false;
+  bool clownAlive = true;
+  bool mummyAlive = true;
+  float clownRespawnTimer = 0.0f;
+  float mummyRespawnTimer = 0.0f;
+  float clownStunTimer = 0.0f;
+  float mummyStunTimer = 0.0f;
   const std::vector<CloudCluster> clouds = {
       {glm::vec3(-16.0f, 14.0f, -18.0f), glm::normalize(glm::vec2(1.0f, 0.2f)), 0.55f, 0.05f,
        {{glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(5.2f, 1.1f, 2.6f)},
@@ -1609,6 +1829,8 @@ int main(int argc, char** argv) {
   bool wasPlayerOnGround = false;
   bool wasClownOnGround = false;
   bool wasJumpDown = false;
+  bool wasLeftMouseDown = false;
+  bool wasDropDown = false;
   float footstepTimer = 0.0f;
   float chaseTimer = 0.0f;
   bool isPaused = false;
@@ -1671,6 +1893,26 @@ int main(int argc, char** argv) {
     clown.jumpCooldown = 0.0f;
     cats = initialCats;
     dogs = initialDogs;
+    worldItems = initialWorldItems;
+    heldItem = ItemType::None;
+    heldItemCharges = 0;
+    remoteHeldItem = ItemType::None;
+    remoteHeldCharges = 0;
+    speedBootTimer = 0.0f;
+    boomerangProjectile = {};
+    swordDashTimer = 0.0f;
+    swordDashCurveTimer = 0.0f;
+    swordDashHit = false;
+    clownAlive = true;
+    mummyAlive = true;
+    clownRespawnTimer = 0.0f;
+    mummyRespawnTimer = 0.0f;
+    clownStunTimer = 0.0f;
+    mummyStunTimer = 0.0f;
+    for (ShotProjectile& projectile : shotgunProjectiles) {
+      projectile.active = false;
+    }
+    collectSprites.clear();
     for (Bomb& bomb : bombs) {
       bomb.active = false;
     }
@@ -1701,6 +1943,26 @@ int main(int argc, char** argv) {
     mummyThrowCooldown = 1.25f * kDifficultyEnemyCooldownScale[difficultyIndex];
     cats = initialCats;
     dogs = initialDogs;
+    worldItems = initialWorldItems;
+    heldItem = ItemType::None;
+    heldItemCharges = 0;
+    remoteHeldItem = ItemType::None;
+    remoteHeldCharges = 0;
+    speedBootTimer = 0.0f;
+    boomerangProjectile = {};
+    swordDashTimer = 0.0f;
+    swordDashCurveTimer = 0.0f;
+    swordDashHit = false;
+    clownAlive = true;
+    mummyAlive = true;
+    clownRespawnTimer = 0.0f;
+    mummyRespawnTimer = 0.0f;
+    clownStunTimer = 0.0f;
+    mummyStunTimer = 0.0f;
+    for (ShotProjectile& projectile : shotgunProjectiles) {
+      projectile.active = false;
+    }
+    collectSprites.clear();
     for (Bomb& bomb : bombs) {
       bomb.active = false;
     }
@@ -1813,6 +2075,22 @@ int main(int argc, char** argv) {
 
     lifeHitCooldown = glm::max(0.0f, lifeHitCooldown - deltaTime);
     player.hurtTimer = glm::max(0.0f, player.hurtTimer - deltaTime);
+    const bool leftMouseDown = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+    const bool dropDown = glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS;
+    const bool useItemPressed = leftMouseDown && !wasLeftMouseDown;
+    const bool dropItemPressed = dropDown && !wasDropDown;
+    wasLeftMouseDown = leftMouseDown;
+    wasDropDown = dropDown;
+    std::uint32_t localInputActions = 0u;
+    for (std::size_t i = 0; i < collectSprites.size();) {
+      collectSprites[i].age += deltaTime;
+      if (collectSprites[i].age >= collectSprites[i].duration) {
+        collectSprites[i] = collectSprites.back();
+        collectSprites.pop_back();
+      } else {
+        ++i;
+      }
+    }
 
     if (!isPaused && !isDead) {
       const float playerSpeedScale = kDifficultyPlayerSpeedScale[difficultyIndex];
@@ -1849,8 +2127,10 @@ int main(int argc, char** argv) {
       inputDir = glm::vec3(0.0f);
     }
 
+    speedBootTimer = glm::max(0.0f, speedBootTimer - deltaTime);
     const bool wantsSprint = glfwGetKey(window, bindings.sprint) == GLFW_PRESS && stamina > 0.05f;
-    const float targetSpeed = moveSpeed * playerSpeedScale * (wantsSprint ? sprintMultiplier : 1.0f);
+    const float bootsMultiplier = (speedBootTimer > 0.0f) ? 1.65f : 1.0f;
+    const float targetSpeed = moveSpeed * playerSpeedScale * bootsMultiplier * (wantsSprint ? sprintMultiplier : 1.0f);
     const float accel = player.onGround ? accelGround : accelAir;
     const glm::vec3 targetVel = inputDir * targetSpeed;
     player.velocity.x = glm::mix(player.velocity.x, targetVel.x, glm::clamp(accel * deltaTime, 0.0f, 1.0f));
@@ -1868,7 +2148,216 @@ int main(int argc, char** argv) {
       jumpBufferTimer = jumpBufferMax;
     }
 
+    auto SpawnCollectSprite = [&](ItemType itemType, const glm::vec3& atPos) {
+      if (collectSprites.size() >= 24) {
+        collectSprites.erase(collectSprites.begin());
+      }
+      CollectSprite sprite;
+      sprite.position = atPos;
+      sprite.itemType = itemType;
+      sprite.age = 0.0f;
+      sprite.duration = 0.82f;
+      collectSprites.push_back(sprite);
+    };
+
+    if (heldItem == ItemType::None) {
+      for (WorldItem& item : worldItems) {
+        if (!item.active) {
+          continue;
+        }
+        if (glm::distance(player.position, item.position) < 1.45f) {
+          const ItemType pickedType = item.type;
+          const glm::vec3 pickupPos = item.position;
+          heldItem = item.type;
+          if (item.type == ItemType::Boomerang) {
+            heldItemCharges = 3;
+          } else if (item.type == ItemType::Shotgun) {
+            heldItemCharges = 3;
+          } else if (item.type == ItemType::Sword) {
+            heldItemCharges = 5;
+          } else {
+            heldItemCharges = 1;
+          }
+          item.active = false;
+          SpawnCollectSprite(pickedType, pickupPos + glm::vec3(0.0f, 0.5f, 0.0f));
+          break;
+        }
+      }
+    }
+
+    const bool remoteRecent = multiplayer.hasRemote && (currentTime - multiplayer.lastReceiveTime) < 2.0f;
+    if (remoteRecent && remoteHeldItem == ItemType::None) {
+      const glm::vec3 remotePos(multiplayer.latest.pos[0], multiplayer.latest.pos[1], multiplayer.latest.pos[2]);
+      for (WorldItem& item : worldItems) {
+        if (!item.active) {
+          continue;
+        }
+        if (glm::distance(remotePos, item.position) < 1.45f) {
+          const ItemType pickedType = item.type;
+          const glm::vec3 pickupPos = item.position;
+          item.active = false;
+          SpawnCollectSprite(pickedType, pickupPos + glm::vec3(0.0f, 0.5f, 0.0f));
+          break;
+        }
+      }
+    }
+
+    auto ConsumeHeldIfEmpty = [&]() {
+      if (heldItemCharges <= 0) {
+        heldItem = ItemType::None;
+        heldItemCharges = 0;
+      }
+    };
+
+    if (dropItemPressed && heldItem != ItemType::None && !boomerangProjectile.active) {
+      localInputActions |= kInputActionDropItem;
+      WorldItem dropped;
+      dropped.type = heldItem;
+      dropped.active = true;
+      dropped.position = player.position + forwardXZ * 1.25f;
+      if (worldItems.size() < 16) {
+        worldItems.push_back(dropped);
+      }
+      heldItem = ItemType::None;
+      heldItemCharges = 0;
+    }
+
+    if (useItemPressed && heldItem != ItemType::None) {
+      localInputActions |= kInputActionUseItem;
+      if (heldItem == ItemType::SpeedBoots) {
+        speedBootTimer = 10.0f;
+        heldItem = ItemType::None;
+        heldItemCharges = 0;
+      } else if (heldItem == ItemType::Boomerang && !boomerangProjectile.active) {
+        boomerangProjectile.active = true;
+        boomerangProjectile.returning = false;
+        boomerangProjectile.timeAlive = 0.0f;
+        boomerangProjectile.position = player.position + glm::vec3(0.0f, 0.7f, 0.0f) + forwardXZ * 0.85f;
+        boomerangProjectile.velocity = forwardXZ * 24.0f;
+        heldItemCharges -= 1;
+      } else if (heldItem == ItemType::Shotgun && heldItemCharges > 0) {
+        const int kPellets = 7;
+        for (int pellet = 0; pellet < kPellets; ++pellet) {
+          for (ShotProjectile& projectile : shotgunProjectiles) {
+            if (projectile.active) {
+              continue;
+            }
+            const float spreadT = (static_cast<float>(pellet) / static_cast<float>(kPellets - 1)) * 2.0f - 1.0f;
+            const glm::vec3 shotDir = glm::normalize(forwardXZ + rightXZ * spreadT * 0.32f + glm::vec3(0.0f, 0.015f * std::abs(spreadT), 0.0f));
+            projectile.active = true;
+            projectile.position = player.position + glm::vec3(0.0f, 0.95f, 0.0f) + shotDir * 0.8f;
+            projectile.velocity = shotDir * 46.0f;
+            projectile.lifetime = 0.35f;
+            break;
+          }
+        }
+        heldItemCharges -= 1;
+        ConsumeHeldIfEmpty();
+      } else if (heldItem == ItemType::Sword && heldItemCharges > 0 && swordDashTimer <= 0.0f) {
+        swordDashTimer = 0.24f;
+        swordDashCurveTimer = 0.24f;
+        swordDashHit = false;
+        swordDashDir = (glm::length(inputDir) > 0.1f) ? glm::normalize(inputDir) : forwardXZ;
+        heldItemCharges -= 1;
+        ConsumeHeldIfEmpty();
+      }
+    }
+
+    if (swordDashTimer > 0.0f) {
+      swordDashTimer = glm::max(0.0f, swordDashTimer - deltaTime);
+      swordDashCurveTimer = glm::max(0.0f, swordDashCurveTimer - deltaTime);
+      const float curveNorm = glm::clamp(1.0f - swordDashCurveTimer / 0.24f, 0.0f, 1.0f);
+      const float hook = std::sin(curveNorm * 3.14159f) * 0.95f;
+      const glm::vec3 curvedDir = glm::normalize(swordDashDir + rightXZ * hook * 0.6f);
+      player.velocity.x = curvedDir.x * 32.0f;
+      player.velocity.z = curvedDir.z * 32.0f;
+    }
+
     player.position += player.velocity * deltaTime;
+
+    auto KillCurrentEnemyFromItem = [&]() {
+      if (currentLevel == GameLevel::Level1Cats && clownAlive) {
+        clownAlive = false;
+        clownRespawnTimer = 7.0f;
+        clownStunTimer = 0.0f;
+        clown.velocity = glm::vec3(0.0f);
+      } else if (currentLevel == GameLevel::Level2Dogs && mummyAlive) {
+        mummyAlive = false;
+        mummyRespawnTimer = 7.0f;
+        mummyStunTimer = 0.0f;
+        mummy.velocity = glm::vec3(0.0f);
+        for (Bomb& bomb : bombs) {
+          bomb.active = false;
+        }
+      }
+    };
+
+    auto StunCurrentEnemy = [&]() {
+      if (currentLevel == GameLevel::Level1Cats && clownAlive) {
+        clownStunTimer = glm::max(clownStunTimer, 2.6f);
+      } else if (currentLevel == GameLevel::Level2Dogs && mummyAlive) {
+        mummyStunTimer = glm::max(mummyStunTimer, 2.6f);
+      }
+    };
+
+    if (boomerangProjectile.active) {
+      boomerangProjectile.timeAlive += deltaTime;
+      const glm::vec3 toPlayer = (player.position + glm::vec3(0.0f, 0.75f, 0.0f)) - boomerangProjectile.position;
+      const float distToPlayer = glm::length(toPlayer);
+      if (!boomerangProjectile.returning) {
+        if (boomerangProjectile.timeAlive > 0.3f || distToPlayer > 20.0f) {
+          boomerangProjectile.returning = true;
+        }
+      }
+      if (boomerangProjectile.returning && distToPlayer > 0.001f) {
+        boomerangProjectile.velocity = glm::normalize(toPlayer) * 26.0f;
+      }
+      boomerangProjectile.position += boomerangProjectile.velocity * deltaTime;
+
+      const glm::vec3 enemyPos = (currentLevel == GameLevel::Level1Cats) ? clown.position : mummy.position;
+      const bool enemyAlive = (currentLevel == GameLevel::Level1Cats) ? clownAlive : mummyAlive;
+      if (enemyAlive && glm::distance(boomerangProjectile.position, enemyPos) < 1.25f) {
+        StunCurrentEnemy();
+      }
+
+      if (boomerangProjectile.returning && distToPlayer < 1.15f) {
+        boomerangProjectile.active = false;
+        if (heldItem == ItemType::Boomerang && heldItemCharges <= 0) {
+          heldItem = ItemType::None;
+          heldItemCharges = 0;
+        }
+      }
+      if (boomerangProjectile.timeAlive > 4.0f) {
+        boomerangProjectile.active = false;
+      }
+    }
+
+    for (ShotProjectile& projectile : shotgunProjectiles) {
+      if (!projectile.active) {
+        continue;
+      }
+      projectile.lifetime -= deltaTime;
+      projectile.position += projectile.velocity * deltaTime;
+      if (projectile.lifetime <= 0.0f) {
+        projectile.active = false;
+        continue;
+      }
+      const glm::vec3 enemyPos = (currentLevel == GameLevel::Level1Cats) ? clown.position : mummy.position;
+      const bool enemyAlive = (currentLevel == GameLevel::Level1Cats) ? clownAlive : mummyAlive;
+      if (enemyAlive && glm::distance(projectile.position, enemyPos) < 1.35f) {
+        projectile.active = false;
+        KillCurrentEnemyFromItem();
+      }
+    }
+
+    if (swordDashTimer > 0.0f && !swordDashHit) {
+      const glm::vec3 enemyPos = (currentLevel == GameLevel::Level1Cats) ? clown.position : mummy.position;
+      const bool enemyAlive = (currentLevel == GameLevel::Level1Cats) ? clownAlive : mummyAlive;
+      if (enemyAlive && glm::distance(player.position, enemyPos) < 2.0f) {
+        swordDashHit = true;
+        KillCurrentEnemyFromItem();
+      }
+    }
 
     player.onGround = false;
     const float groundTop = platforms[0].position.y + platforms[0].halfExtents.y;
@@ -1916,10 +2405,32 @@ int main(int argc, char** argv) {
     }
     wasJumpDown = jumpDown;
 
+    clownStunTimer = glm::max(0.0f, clownStunTimer - deltaTime);
+    mummyStunTimer = glm::max(0.0f, mummyStunTimer - deltaTime);
+    if (!clownAlive) {
+      clownRespawnTimer = glm::max(0.0f, clownRespawnTimer - deltaTime);
+      if (clownRespawnTimer <= 0.0f) {
+        clownAlive = true;
+        clown.position = clownStartPosition;
+        clown.velocity = glm::vec3(0.0f);
+        clown.onGround = true;
+      }
+    }
+    if (!mummyAlive) {
+      mummyRespawnTimer = glm::max(0.0f, mummyRespawnTimer - deltaTime);
+      if (mummyRespawnTimer <= 0.0f) {
+        mummyAlive = true;
+        mummy.position = mummyStartPosition;
+        mummy.velocity = glm::vec3(0.0f);
+        mummy.onGround = true;
+      }
+    }
+
     if (currentLevel == GameLevel::Level1Cats) {
+    if (clownAlive) {
     const float enemyGround = platforms[0].position.y + platforms[0].halfExtents.y + clown.halfSize;
     const float playerDistance = glm::length(player.position - clown.position);
-    const float aggroRange = 18.0f * aggroScale;
+    const float aggroRange = 18.0f * aggroScale * kMapScale;
     const bool hasLineOfSight = playerDistance < aggroRange;
     const float levelThreat = glm::clamp(static_cast<float>(collectedCount) / 10.0f, 0.0f, 1.0f);
     glm::vec3 aiTarget = player.position;
@@ -1954,11 +2465,14 @@ int main(int argc, char** argv) {
       chaseDir = glm::normalize(chaseDir);
     }
 
-    const float closeRange = 4.5f;
+    const float closeRange = 4.5f * kMapScale;
     const float speedRamp = 1.0f + glm::clamp((closeRange - playerDistance) / closeRange, 0.0f, 1.0f) * 0.6f;
     const float adaptiveSpeedBoost = 1.0f + levelThreat * 0.3f;
     const float clownChaseSpeed = clown.speed * enemySpeedScale * speedRamp * 1.15f * adaptiveSpeedBoost;
-    if (clownAiState == ClownAiState::Windup) {
+    if (clownStunTimer > 0.0f) {
+      clown.velocity.x = 0.0f;
+      clown.velocity.z = 0.0f;
+    } else if (clownAiState == ClownAiState::Windup) {
       clown.velocity.x = 0.0f;
       clown.velocity.z = 0.0f;
       clownJumpWindup = glm::max(0.0f, clownJumpWindup - deltaTime);
@@ -1979,7 +2493,7 @@ int main(int argc, char** argv) {
     const float playerHorizDist = glm::length(glm::vec2(player.position.x - clown.position.x,
                                                        player.position.z - clown.position.z));
     if (!hasWon && clown.onGround && clown.jumpCooldown <= 0.0f && clownAiState != ClownAiState::Windup &&
-        playerHeightGap > 0.2f && playerHorizDist < 6.5f) {
+      clownStunTimer <= 0.0f && playerHeightGap > 0.2f && playerHorizDist < 6.5f * kMapScale) {
       clownAiState = ClownAiState::Windup;
       clownJumpWindup = 0.18f * enemyCooldownScale;
     }
@@ -2011,7 +2525,7 @@ int main(int argc, char** argv) {
       wasClownOnGround = clown.onGround;
 
       chaseTimer -= deltaTime;
-      if (playerDistance < 5.5f && chaseTimer <= 0.0f) {
+      if (playerDistance < 5.5f * kMapScale && chaseTimer <= 0.0f) {
         PlaySound(audio.chase);
         chaseTimer = 2.5f;
       }
@@ -2050,9 +2564,12 @@ int main(int argc, char** argv) {
     const float hitDistance = player.halfSize + clown.halfSize + 0.1f;
     if (glm::distance(player.position, clown.position) < hitDistance) {
       LoseLife(true, false);
-      clown.position = glm::vec3(4.0f, enemyGround, -4.0f);
+      clown.position = clownStartPosition;
       clown.velocity = glm::vec3(0.0f);
       clown.onGround = true;
+    }
+    } else {
+      clown.velocity = glm::vec3(0.0f);
     }
 
       collectedCount = 0;
@@ -2272,7 +2789,7 @@ int main(int argc, char** argv) {
         player.position = levelTwoSpawn;
         player.velocity = glm::vec3(0.0f);
         clown.velocity = glm::vec3(0.0f);
-        mummy.position = glm::vec3(-2.0f, 0.45f, -10.0f);
+        mummy.position = mummyStartPosition;
         mummy.velocity = glm::vec3(0.0f);
         mummyThrowCooldown = 1.25f * enemyCooldownScale;
         for (Bomb& bomb : bombs) {
@@ -2284,6 +2801,7 @@ int main(int argc, char** argv) {
         std::cout << "Level 2 unlocked! Collect 20 dogs and escape the mummy.\n";
       }
     } else {
+      if (mummyAlive) {
       const float enemyGround = platforms[0].position.y + platforms[0].halfExtents.y + mummy.halfSize;
       const glm::vec3 toPlayer = player.position - mummy.position;
       glm::vec3 moveDir(toPlayer.x, 0.0f, toPlayer.z);
@@ -2291,11 +2809,16 @@ int main(int argc, char** argv) {
         moveDir = glm::normalize(moveDir);
       }
 
-      const float desiredDistance = 8.0f;
+      const float desiredDistance = 8.0f * kMapScale;
       const float dist2D = glm::length(glm::vec2(toPlayer.x, toPlayer.z));
       const float approach = glm::clamp((dist2D - desiredDistance) / 6.0f, -1.0f, 1.0f);
-      mummy.velocity.x = moveDir.x * mummy.speed * enemySpeedScale * approach;
-      mummy.velocity.z = moveDir.z * mummy.speed * enemySpeedScale * approach;
+      if (mummyStunTimer > 0.0f) {
+        mummy.velocity.x = 0.0f;
+        mummy.velocity.z = 0.0f;
+      } else {
+        mummy.velocity.x = moveDir.x * mummy.speed * enemySpeedScale * approach;
+        mummy.velocity.z = moveDir.z * mummy.speed * enemySpeedScale * approach;
+      }
       mummy.velocity.y += gravity * deltaTime;
       mummy.position += mummy.velocity * deltaTime;
 
@@ -2323,11 +2846,11 @@ int main(int argc, char** argv) {
       }
 
       mummyThrowCooldown -= deltaTime;
-      if (mummyThrowCooldown <= (0.35f * enemyCooldownScale) && dist2D < 26.0f) {
+      if (mummyThrowCooldown <= (0.35f * enemyCooldownScale) && dist2D < 26.0f * kMapScale) {
         mummyThrowTelegraph = glm::max(mummyThrowTelegraph, 0.25f);
       }
       mummyThrowTelegraph = glm::max(0.0f, mummyThrowTelegraph - deltaTime);
-      if (mummyThrowCooldown <= 0.0f && dist2D < 26.0f) {
+      if (mummyThrowCooldown <= 0.0f && dist2D < 26.0f * kMapScale && mummyStunTimer <= 0.0f) {
         for (Bomb& bomb : bombs) {
           if (!bomb.active) {
             bomb.active = true;
@@ -2338,7 +2861,7 @@ int main(int argc, char** argv) {
             if (glm::length(throwDir) > 0.001f) {
               throwDir = glm::normalize(throwDir);
             }
-            bomb.velocity = throwDir * (7.5f + glm::clamp(dist2D / 16.0f, 0.0f, 1.2f)) * enemySpeedScale;
+            bomb.velocity = throwDir * (7.5f + glm::clamp(dist2D / (16.0f * kMapScale), 0.0f, 1.2f)) * enemySpeedScale;
             bomb.velocity.y = 6.2f * enemySpeedScale;
             break;
           }
@@ -2425,6 +2948,11 @@ int main(int argc, char** argv) {
           }
           bomb.active = false;
         }
+      }
+
+      } else {
+        mummy.velocity = glm::vec3(0.0f);
+        mummyThrowTelegraph = 0.0f;
       }
 
       const float dogRadius = 0.44f;
@@ -2564,6 +3092,68 @@ int main(int argc, char** argv) {
     const bool freshRemoteState = multiplayer.active && multiplayer.hasRemote &&
                                   (currentTime - multiplayer.lastReceiveTime) < 2.0f;
     const bool remoteIsAuthority = freshRemoteState && ((multiplayer.latest.flags & kNetFlagAuthority) != 0u);
+    if (freshRemoteState) {
+      remoteHeldItem = static_cast<ItemType>(multiplayer.latest.localHeldItemType);
+      remoteHeldCharges = multiplayer.latest.localHeldItemCharges;
+    }
+    if (freshRemoteState && multiplayerAuthority && !remoteIsAuthority) {
+      const glm::vec3 remotePos(multiplayer.latest.pos[0], multiplayer.latest.pos[1], multiplayer.latest.pos[2]);
+      const glm::vec3 remoteForward(std::sin(multiplayer.latest.facing), 0.0f, std::cos(multiplayer.latest.facing));
+      const std::uint32_t remoteActions = multiplayer.latest.inputActions;
+
+      if ((remoteActions & kInputActionDropItem) != 0u && remoteHeldItem != ItemType::None) {
+        WorldItem dropped;
+        dropped.type = remoteHeldItem;
+        dropped.active = true;
+        dropped.position = remotePos + remoteForward * 1.25f;
+        if (worldItems.size() < 16) {
+          worldItems.push_back(dropped);
+        }
+      }
+
+      if ((remoteActions & kInputActionUseItem) != 0u) {
+        auto KillEnemyByRemoteAction = [&]() {
+          if (currentLevel == GameLevel::Level1Cats && clownAlive) {
+            clownAlive = false;
+            clownRespawnTimer = 7.0f;
+            clownStunTimer = 0.0f;
+            clown.velocity = glm::vec3(0.0f);
+          } else if (currentLevel == GameLevel::Level2Dogs && mummyAlive) {
+            mummyAlive = false;
+            mummyRespawnTimer = 7.0f;
+            mummyStunTimer = 0.0f;
+            mummy.velocity = glm::vec3(0.0f);
+            for (Bomb& bomb : bombs) {
+              bomb.active = false;
+            }
+          }
+        };
+
+        const glm::vec3 enemyPos = (currentLevel == GameLevel::Level1Cats) ? clown.position : mummy.position;
+        const bool enemyAliveNow = (currentLevel == GameLevel::Level1Cats) ? clownAlive : mummyAlive;
+        if (enemyAliveNow) {
+          const float enemyDistance = glm::distance(remotePos, enemyPos);
+          glm::vec3 toEnemy(enemyPos.x - remotePos.x, 0.0f, enemyPos.z - remotePos.z);
+          float facingDot = 1.0f;
+          if (glm::length(toEnemy) > 0.001f) {
+            toEnemy = glm::normalize(toEnemy);
+            facingDot = glm::dot(glm::normalize(glm::vec3(remoteForward.x, 0.0f, remoteForward.z)), toEnemy);
+          }
+
+          if (remoteHeldItem == ItemType::Boomerang && enemyDistance < 18.0f) {
+            if (currentLevel == GameLevel::Level1Cats) {
+              clownStunTimer = glm::max(clownStunTimer, 2.6f);
+            } else {
+              mummyStunTimer = glm::max(mummyStunTimer, 2.6f);
+            }
+          } else if (remoteHeldItem == ItemType::Shotgun && enemyDistance < 10.0f && facingDot > 0.35f) {
+            KillEnemyByRemoteAction();
+          } else if (remoteHeldItem == ItemType::Sword && enemyDistance < 3.0f) {
+            KillEnemyByRemoteAction();
+          }
+        }
+      }
+    }
     if (remoteIsAuthority && !multiplayerAuthority) {
       const std::uint16_t remoteLevel = multiplayer.latest.level;
       if (remoteLevel >= 2u && currentLevel == GameLevel::Level1Cats) {
@@ -2584,7 +3174,16 @@ int main(int argc, char** argv) {
                          cats,
                          dogs,
                          bombs,
-                         explosions);
+                         explosions,
+                         worldItems,
+                         remoteHeldItem,
+                         remoteHeldCharges,
+                         clownAlive,
+                         clownRespawnTimer,
+                         clownStunTimer,
+                         mummyAlive,
+                         mummyRespawnTimer,
+                         mummyStunTimer);
 
       collectedCount = std::max(0, multiplayer.latest.collected);
       livesRemaining = std::max(0, multiplayer.latest.lives);
@@ -2596,6 +3195,12 @@ int main(int argc, char** argv) {
       const int catsCollectedNow = ApplyCollectedCatMask(cats, mergedCatsMask);
       const int dogsCollectedNow = ApplyCollectedDogMask(dogs, mergedDogsMask);
       collectedCount = (currentLevel == GameLevel::Level1Cats) ? catsCollectedNow : dogsCollectedNow;
+
+      const std::uint32_t remoteWorldActiveMask = multiplayer.latest.worldItemActiveMask;
+      for (std::size_t i = 0; i < worldItems.size() && i < 16; ++i) {
+        const bool remoteActive = (remoteWorldActiveMask & (1u << static_cast<std::uint32_t>(i))) != 0u;
+        worldItems[i].active = worldItems[i].active && remoteActive;
+      }
 
       if ((multiplayer.latest.flags & kNetFlagDead) != 0u) {
         isDead = true;
@@ -2609,6 +3214,7 @@ int main(int argc, char** argv) {
                 player.position,
                 player.velocity,
                 playerFacing,
+                localInputActions,
                 localLevel,
                 multiplayerAuthority,
                 hasWon,
@@ -2626,6 +3232,15 @@ int main(int argc, char** argv) {
                 dogs,
                 bombs,
                 explosions,
+                worldItems,
+                heldItem,
+                heldItemCharges,
+                clownAlive,
+                clownRespawnTimer,
+                clownStunTimer,
+                mummyAlive,
+                mummyRespawnTimer,
+                mummyStunTimer,
                 collectedCount,
                 livesRemaining);
 
@@ -2680,6 +3295,24 @@ int main(int argc, char** argv) {
       glBindTexture(GL_TEXTURE_2D, tex);
       glm::mat4 model(1.0f);
       model = glm::translate(model, position);
+      model = glm::scale(model, scale);
+      shader.SetMat4("uModel", model);
+      shader.SetMat3("uNormalMatrix", glm::transpose(glm::inverse(glm::mat3(model))));
+      shader.SetVec3("uTint", tint);
+      glDrawArrays(GL_TRIANGLES, 0, 36);
+    };
+
+    auto DrawCubeRot = [&](const glm::vec3& position,
+                           const glm::vec3& rotation,
+                           const glm::vec3& scale,
+                           const glm::vec3& tint,
+                           GLuint tex) {
+      glBindTexture(GL_TEXTURE_2D, tex);
+      glm::mat4 model(1.0f);
+      model = glm::translate(model, position);
+      model = glm::rotate(model, rotation.x, glm::vec3(1.0f, 0.0f, 0.0f));
+      model = glm::rotate(model, rotation.y, glm::vec3(0.0f, 1.0f, 0.0f));
+      model = glm::rotate(model, rotation.z, glm::vec3(0.0f, 0.0f, 1.0f));
       model = glm::scale(model, scale);
       shader.SetMat4("uModel", model);
       shader.SetMat3("uNormalMatrix", glm::transpose(glm::inverse(glm::mat3(model))));
@@ -2829,6 +3462,77 @@ int main(int argc, char** argv) {
       DrawCube(post + glm::vec3(0.0f, 0.9f, 0.0f), glm::vec3(0.08f, 0.9f, 0.08f), glm::vec3(0.34f, 0.27f, 0.2f), platformTexture);
       DrawCube(post + glm::vec3(0.0f, 1.85f, 0.0f), glm::vec3(0.19f, 0.19f, 0.19f), glm::vec3(1.0f, 0.82f, 0.45f), cloudTexture);
       DrawCube(post + glm::vec3(0.0f, 1.85f, 0.0f), glm::vec3(0.12f, 0.12f, 0.12f), glm::vec3(1.0f, 0.95f, 0.7f), cloudTexture);
+    }
+
+    // Extra dense foliage scatter for the expanded map footprint.
+    for (int gx = -4; gx <= 4; ++gx) {
+      for (int gz = -4; gz <= 4; ++gz) {
+        const glm::vec3 tileOffset(static_cast<float>(gx) * 48.0f, 0.0f, static_cast<float>(gz) * 48.0f);
+        if (gx == 0 && gz == 0) {
+          continue;
+        }
+        const glm::vec3 treeBase = tileOffset + glm::vec3(6.0f + static_cast<float>((gx * 13 + gz * 7) % 9), 0.0f,
+                                                           -5.0f + static_cast<float>((gx * 5 - gz * 11) % 9));
+        DrawTree(treeBase, 1.5f, 0.86f, glm::vec3(0.24f, 0.5f, 0.28f));
+        DrawTree(treeBase + glm::vec3(10.0f, 0.0f, 8.0f), 1.25f, 0.75f, glm::vec3(0.3f, 0.56f, 0.3f));
+        DrawCube(tileOffset + glm::vec3(-8.0f, 0.2f, 6.0f), glm::vec3(0.65f, 0.2f, 0.65f), glm::vec3(0.26f, 0.52f, 0.25f), catTexture);
+        DrawCube(tileOffset + glm::vec3(-8.0f, 0.43f, 6.0f), glm::vec3(0.16f, 0.1f, 0.16f), glm::vec3(0.86f, 0.76f, 0.56f), cloudTexture);
+      }
+    }
+
+    for (const WorldItem& item : worldItems) {
+      if (!item.active) {
+        continue;
+      }
+      const glm::vec3 tint = ItemTypeTint(item.type);
+      const float hover = 0.45f + 0.16f * std::sin(currentTime * 2.8f + item.position.x * 0.02f + item.position.z * 0.01f);
+      const float spin = currentTime * 1.55f + item.position.x * 0.004f;
+      const glm::vec3 base = item.position + glm::vec3(0.0f, hover, 0.0f);
+
+      if (item.type == ItemType::Boomerang) {
+        DrawCubeRot(base, glm::vec3(0.0f, spin, glm::radians(28.0f)), glm::vec3(0.36f, 0.05f, 0.12f), tint, knifeTexture);
+        DrawCubeRot(base, glm::vec3(0.0f, spin, glm::radians(-28.0f)), glm::vec3(0.36f, 0.05f, 0.12f), tint * glm::vec3(1.08f, 1.05f, 0.95f), knifeTexture);
+        DrawCubeRot(base + glm::vec3(0.0f, 0.03f, 0.0f), glm::vec3(0.0f, spin, 0.0f), glm::vec3(0.08f, 0.06f, 0.08f), glm::vec3(0.3f, 0.22f, 0.18f), platformTexture);
+      } else if (item.type == ItemType::SpeedBoots) {
+        DrawCubeRot(base + glm::vec3(0.14f, 0.03f, 0.0f), glm::vec3(0.0f, spin, 0.0f), glm::vec3(0.13f, 0.14f, 0.22f), tint, cloudTexture);
+        DrawCubeRot(base + glm::vec3(-0.14f, 0.03f, 0.0f), glm::vec3(0.0f, spin, 0.0f), glm::vec3(0.13f, 0.14f, 0.22f), tint, cloudTexture);
+        DrawCubeRot(base + glm::vec3(0.14f, -0.09f, -0.02f), glm::vec3(0.0f, spin, 0.0f), glm::vec3(0.15f, 0.04f, 0.24f), glm::vec3(0.18f, 0.2f, 0.24f), knifeTexture);
+        DrawCubeRot(base + glm::vec3(-0.14f, -0.09f, -0.02f), glm::vec3(0.0f, spin, 0.0f), glm::vec3(0.15f, 0.04f, 0.24f), glm::vec3(0.18f, 0.2f, 0.24f), knifeTexture);
+      } else if (item.type == ItemType::Shotgun) {
+        DrawCubeRot(base, glm::vec3(0.0f, spin, 0.0f), glm::vec3(0.46f, 0.08f, 0.08f), glm::vec3(0.5f, 0.52f, 0.58f), knifeTexture);
+        DrawCubeRot(base + glm::vec3(0.17f, -0.03f, 0.0f), glm::vec3(0.0f, spin, 0.0f), glm::vec3(0.16f, 0.07f, 0.1f), glm::vec3(0.42f, 0.28f, 0.16f), platformTexture);
+        DrawCubeRot(base + glm::vec3(-0.18f, 0.02f, 0.0f), glm::vec3(0.0f, spin, 0.0f), glm::vec3(0.2f, 0.04f, 0.04f), glm::vec3(0.72f, 0.74f, 0.8f), cloudTexture);
+      } else if (item.type == ItemType::Sword) {
+        DrawCubeRot(base + glm::vec3(0.0f, 0.16f, 0.0f), glm::vec3(0.0f, spin, 0.0f), glm::vec3(0.045f, 0.36f, 0.045f), glm::vec3(0.85f, 0.88f, 0.96f), knifeTexture);
+        DrawCubeRot(base + glm::vec3(0.0f, 0.01f, 0.0f), glm::vec3(0.0f, spin, 0.0f), glm::vec3(0.17f, 0.03f, 0.06f), glm::vec3(0.78f, 0.68f, 0.32f), platformTexture);
+        DrawCubeRot(base + glm::vec3(0.0f, -0.09f, 0.0f), glm::vec3(0.0f, spin, 0.0f), glm::vec3(0.038f, 0.14f, 0.038f), glm::vec3(0.34f, 0.24f, 0.14f), platformTexture);
+      } else {
+        DrawCube(base, glm::vec3(0.22f, 0.22f, 0.22f), tint, knifeTexture);
+      }
+    }
+
+    const float billboardYaw = std::atan2(cameraForward.x, cameraForward.z);
+    for (const CollectSprite& sprite : collectSprites) {
+      const float t = glm::clamp(sprite.age / glm::max(sprite.duration, 0.001f), 0.0f, 1.0f);
+      const float rise = t * 1.35f;
+      const float pulse = 1.0f + std::sin(t * 14.0f) * 0.12f;
+      const float size = (0.46f + (1.0f - t) * 0.22f) * pulse;
+      const glm::vec3 color = glm::mix(ItemTypeTint(sprite.itemType), glm::vec3(1.0f, 1.0f, 1.0f), t * 0.55f);
+      const glm::vec3 center = sprite.position + glm::vec3(0.0f, rise, 0.0f);
+      DrawCubeRot(center, glm::vec3(0.0f, billboardYaw, 0.0f), glm::vec3(size, size, 0.02f), color, cloudTexture);
+      DrawCubeRot(center, glm::vec3(0.0f, billboardYaw + glm::radians(90.0f), 0.0f), glm::vec3(size * 0.82f, size * 0.82f, 0.02f), color * glm::vec3(1.05f, 1.05f, 1.05f), cloudTexture);
+      DrawCubeRot(center + glm::vec3(0.0f, 0.08f, 0.0f), glm::vec3(0.0f, billboardYaw + t * 4.5f, 0.0f),
+                 glm::vec3(size * 0.36f, size * 0.36f, 0.02f), glm::vec3(1.0f, 0.96f, 0.8f), knifeTexture);
+    }
+
+    if (boomerangProjectile.active) {
+      DrawCube(boomerangProjectile.position, glm::vec3(0.24f, 0.07f, 0.14f), glm::vec3(0.95f, 0.78f, 0.22f), knifeTexture);
+    }
+    for (const ShotProjectile& projectile : shotgunProjectiles) {
+      if (!projectile.active) {
+        continue;
+      }
+      DrawCube(projectile.position, glm::vec3(0.05f, 0.05f, 0.12f), glm::vec3(1.0f, 0.92f, 0.52f), cloudTexture);
     }
 
     if (currentLevel == GameLevel::Level1Cats) {
@@ -3225,6 +3929,7 @@ int main(int argc, char** argv) {
     }
 
     if (currentLevel == GameLevel::Level1Cats) {
+      if (clownAlive) {
       const float clownSize = clown.halfSize * 2.0f;
       const float clownSpeed = glm::length(glm::vec2(clown.velocity.x, clown.velocity.z));
       const float clownWalk = glm::clamp(clownSpeed / clown.speed, 0.0f, 1.0f);
@@ -3270,7 +3975,9 @@ int main(int argc, char** argv) {
       shader.SetVec3("uTint", glm::vec3(0.85f, 0.85f, 0.9f));
       glBindTexture(GL_TEXTURE_2D, knifeTexture);
       glDrawArrays(GL_TRIANGLES, 0, 36);
+      }
     } else {
+      if (mummyAlive) {
       const float mummySize = mummy.halfSize * 2.0f;
       const float mummySpeed = glm::length(glm::vec2(mummy.velocity.x, mummy.velocity.z));
       const float mummyWalk = glm::clamp(mummySpeed / glm::max(mummy.speed, 0.001f), 0.0f, 1.0f);
@@ -3303,6 +4010,7 @@ int main(int argc, char** argv) {
       shader.SetVec3("uTint", glm::vec3(0.22f, 0.22f, 0.24f));
       glBindTexture(GL_TEXTURE_2D, knifeTexture);
       glDrawArrays(GL_TRIANGLES, 0, 36);
+      }
     }
 
     glBindVertexArray(0);
@@ -3375,7 +4083,23 @@ int main(int argc, char** argv) {
     } else {
       ImGui::Text("You escaped! 🎉");
     }
+    if (heldItem != ItemType::None) {
+      ImGui::Text("Item: %s (%d)", ItemTypeName(heldItem), heldItemCharges);
+    } else {
+      ImGui::Text("Item: None");
+    }
+    if (speedBootTimer > 0.0f) {
+      ImGui::Text("Speed Boots: %.1fs", speedBootTimer);
+    }
+    if (currentLevel == GameLevel::Level1Cats && !clownAlive) {
+      ImGui::Text("Clown respawn: %.1fs", clownRespawnTimer);
+    }
+    if (currentLevel == GameLevel::Level2Dogs && !mummyAlive) {
+      ImGui::Text("Mummy respawn: %.1fs", mummyRespawnTimer);
+    }
     ImGui::Text("Esc/P: Pause");
+    ImGui::Text("Left Click: Use item");
+    ImGui::Text("Q: Drop item");
     ImGui::End();
 
     if (showMultiplayerWindow) {

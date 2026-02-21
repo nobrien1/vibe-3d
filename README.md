@@ -10,6 +10,8 @@ Minimal 3D platformer demo in C++ using OpenGL, GLFW, GLAD, and GLM.
 
 - W/A/S/D: Move
 - Space: Jump
+- Left mouse button: Use held item
+- Q: Drop held item
 - Hold right mouse button: Orbit camera
 - Esc or P: Pause/Resume
 - Pause menu: Adjust audio/camera/settings, remap keybinds (GLFW codes), toggle accessibility/debug, reset player, quit
@@ -32,6 +34,14 @@ Detailed implementation roadmap is tracked in `ROADMAP.md`.
 
 - Level 1: Collect 10 cats and reach the car while avoiding the clown.
 - Level 2: Collect 20 very cute dogs and reach the car while a mummy throws bombs at you.
+
+## Shared item pickups
+
+- Boomerang: throwable and returns; 3 uses total; stuns the active level enemy on hit.
+- Speed boots: 10-second movement speed boost.
+- Shotgun: 3 shells with projectile spread; enemy dies on hit.
+- Sword: 5 uses; fast hook-like dash strike; enemy dies on hit.
+- Item kills trigger enemy respawn after 7 seconds.
 
 ## Build
 

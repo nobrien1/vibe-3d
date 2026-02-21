@@ -58,3 +58,46 @@
 - [x] 8. Performance instrumentation
 - [x] 9. Audio polish
 - [x] 10. Accessibility UX
+
+## Requested expansion roadmap (map x10 + items + enemy respawn)
+
+1. **Scale world footprint by 10x (XZ plane only)**
+   - Apply a single map scale constant to gameplay coordinates and extents.
+   - Scale player/enemy spawn targets, objectives, platform placement, and patrol zones.
+   - Keep vertical gameplay unchanged to preserve jump and platforming feel.
+
+2. **Keep environment dense after scale-up**
+   - Expand environment generation around the larger footprint via tiled offsets.
+   - Reuse existing prop sets (hills, trees, structures, paths, shrubs, lanterns) to avoid style drift.
+
+3. **Add shared world item pickups (multiplayer-aware)**
+   - Add item entities that can be picked by either player.
+   - Keep one carried item per player.
+   - Sync world item availability and held-item state over multiplayer packets.
+
+4. **Implement item actions and controls**
+   - `Left Mouse`: activate held item.
+   - `Q`: drop held item at current player location.
+   - Boomerang: 3 uses, returns after throw, stuns enemy on hit.
+   - Speed boots: 10s speed buff.
+   - Shotgun: 3 shells, spread projectiles, enemy kill on hit.
+   - Sword: 5 uses, hook-like dash attack, enemy kill on hit.
+
+5. **Enemy death/respawn lifecycle**
+   - Item kills set enemy inactive.
+   - Enemy respawns at original spawn point after 7s.
+   - Keep existing non-item hazards/damage behavior intact.
+
+6. **Validation and balancing pass**
+   - Build with current CMake profile.
+   - Sanity-check both levels, both enemies, and multiplayer sync.
+   - Tune pickup radius, projectile speed, and dash feel for readability.
+
+### Status
+
+- [x] 1. Scale world footprint by 10x (XZ plane)
+- [x] 2. Keep environment dense after scale-up
+- [x] 3. Add shared world item pickups
+- [x] 4. Implement item actions + controls (`LMB` use, `Q` drop)
+- [x] 5. Add enemy death and 7s respawn lifecycle
+- [x] 6. Build verification and tuning pass
